@@ -35,6 +35,8 @@ Every predictor below is scored on the same 262,824 games, held out **by time** 
 so the model is judged on matches played after everything it learned from, the
 way it would be used.
 
+![What each approach is worth](figures/baseline_comparison.png)
+
 | Predictor | What it knows | Log-loss | AUC | Calibration error |
 | --- | --- | ---: | ---: | ---: |
 | Coin flip | Nothing | 0.6931 | 0.500 | 0.001 |
@@ -56,6 +58,15 @@ matchups reasonably but are badly overconfident. That distinction matters here
 because the recommender searches thousands of possible drafts and multiplies
 these probabilities together — an evaluator that is confidently wrong compounds
 its error at every step, while one that is honestly uncertain does not.
+
+### It keeps getting better with more data
+
+![More data still helps](figures/learning_curve.png)
+
+There is no plateau at a million games, which is why the companion pipeline
+collects continuously and this model is retrained as the data grows. It also sets
+a floor: below roughly 100,000 games the model is **worse than counting**, so an
+early-season model is checked against the baselines before it is used.
 
 ## How it works
 
@@ -190,6 +201,7 @@ tests/        138 tests, no network required
 | --- | --- |
 | [`docs/MODEL.md`](docs/MODEL.md) | The model, why it's built this way, and what the numbers mean |
 | [`docs/DATA.md`](docs/DATA.md) | Where the data comes from and what a row is |
+| [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) | Intended use, performance, and limitations |
 
 ## License
 

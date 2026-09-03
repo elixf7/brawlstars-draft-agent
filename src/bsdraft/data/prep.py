@@ -20,9 +20,7 @@ import pandas as pd
 
 from bsdraft.data.sources import (
     ALL_BRAWLER_COLS,
-    KEEP_COLS,
     TEAM1_BRAWLER_COLS,
-    TEAM2_BRAWLER_COLS,
     DatasetRef,
     load_matches,
 )

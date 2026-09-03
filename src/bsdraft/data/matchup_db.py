@@ -32,8 +32,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bsdraft.data.sources import DatasetRef
 from bsdraft.data.prep import DB_PATH, TEAM1_BRAWLER_COLS, TEAM2_BRAWLER_COLS, build_game_dataset
+from bsdraft.data.sources import DatasetRef
 
 # src/bsdraft/<subpackage>/<module>.py -> repository root
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -419,7 +419,7 @@ class MatchupDB:
         print(f"MatchupDB saved → {path}  ({size_mb:.1f} MB)")
 
     @classmethod
-    def load(cls, path: Path = DEFAULT_SAVE_PATH) -> "MatchupDB":
+    def load(cls, path: Path = DEFAULT_SAVE_PATH) -> MatchupDB:
         import importlib
 
         class _Unpickler(pickle.Unpickler):
@@ -440,13 +440,14 @@ class MatchupDB:
     @classmethod
     def build(
         cls,
-        source: "DatasetRef | str | Path | None" = None,
+        source: DatasetRef | str | Path | None = None,
         db_path: Path = DB_PATH,
         elo_min: int | None = None,
         elo_max: int | None = None,
-    ) -> "MatchupDB":
+    ) -> MatchupDB:
         """Build all three tables from scratch. Runs the full 1.2 pipeline."""
-        from bsdraft.data.prep import ELO_MIN as _EMIN, ELO_MAX as _EMAX
+        from bsdraft.data.prep import ELO_MAX as _EMAX
+        from bsdraft.data.prep import ELO_MIN as _EMIN
 
         df, _ = build_game_dataset(
             source if source is not None else db_path,
@@ -472,6 +473,7 @@ class MatchupDB:
 if __name__ == "__main__":
     import argparse
     import sys
+
     from bsdraft.data.prep import SEASON_CONFIGS
 
     parser = argparse.ArgumentParser(description="Build MatchupDB for a given season.")
