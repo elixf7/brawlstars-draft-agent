@@ -13,8 +13,11 @@
 # reproducible from a config plus the published dataset. Season databases
 # are produced by the ETL pipeline and distributed through Hugging Face.
 # ---------------------------------------------------------------
-data/
-season*/
+# Leading slash: anchored to the repository root. Without it these also match
+# src/bsdraft/data/, which silently kept a whole package out of git until CI
+# tried a fresh clone.
+/data/
+/season*/
 *.pkl
 *.pt
 *.pth
