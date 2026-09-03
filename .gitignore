@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------------------------------------------------------------
+# Training artifacts and inputs
+# Model checkpoints, feature matrices, and self-play records are all
+# reproducible from a config plus the published dataset. Season databases
+# are produced by the ETL pipeline and distributed through Hugging Face.
+# ---------------------------------------------------------------
+data/
+season*/
+*.pkl
+*.pt
+*.pth
+*.npz
+*.npy
+*.joblib
+*.db
+*.db-wal
+*.db-shm
+*.parquet
+!tests/fixtures/**
+
+# ---------------------------------------------------------------
+# Working notes
+# Planning documents and scratch. Conclusions worth publishing live in docs/.
+# ---------------------------------------------------------------
+notes/
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
+__pycache__/
+*.py[oc]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+wheels/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------
+# Editor / OS
+# ---------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+.claude/
