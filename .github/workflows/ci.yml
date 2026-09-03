@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Ruff
+        run: uv run ruff check src/ tests/ --output-format=github
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      # No network: every test runs against the committed fixture, so CI cannot
+      # be broken by the dataset changing underneath it.
+      - name: Tests
+        run: uv run pytest -q --durations=10
+
+  cli:
+    # The commands are how the pipeline is actually driven; a broken entry point
+    # is a real failure that unit tests do not reach.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Every command responds
+        run: |
+          for c in bsdraft-data bsdraft-train bsdraft-runs bsdraft-eval; do
+            echo "--- $c"
+            uv run "$c" --help > /dev/null
+          done
+      - name: A config resolves
+        run: uv run bsdraft-train show -c configs/default.toml > /dev/null

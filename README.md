@@ -131,9 +131,13 @@ config differences
 ```
 
 ```bash
-uv run pytest
+uv run pytest                      # 128 tests, no network needed
 uv run ruff check src/ tests/
 ```
+
+Tests run against a committed sample of 4,000 real games, so feature construction
+and the split are exercised on realistic data rather than rows written to match
+the assumptions being tested.
 
 Training artifacts, feature matrices, and season databases are git-ignored:
 they are reproducible from a config plus the published dataset.

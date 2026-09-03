@@ -25,6 +25,7 @@ season*/
 *.db-wal
 *.db-shm
 *.parquet
+!tests/fixtures/*.parquet
 !tests/fixtures/**
 
 # ---------------------------------------------------------------
