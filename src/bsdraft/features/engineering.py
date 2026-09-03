@@ -39,13 +39,15 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix, load_npz, save_npz
 
-# Ensure src/ is on the path so intra-package imports work whether this module
-# is imported as `src.feature_engineering` (from repo root) or run directly.
 from bsdraft.data.prep import (
     TEAM1_BRAWLER_COLS,
     TEAM2_BRAWLER_COLS,
     build_game_dataset,
 )
+
+# Ensure src/ is on the path so intra-package imports work whether this module
+# is imported as `src.feature_engineering` (from repo root) or run directly.
+from bsdraft.data.sources import DatasetRef
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -324,7 +326,7 @@ def build_and_save(
     matrix_path: Path = MATRIX_PATH,
     labels_path: Path = LABELS_PATH,
     schema_path: Path = SCHEMA_PATH,
-    db_path: Path | None = None,
+    source: DatasetRef | str | Path | None = None,
     elo_min: int | None = None,
     elo_max: int | None = None,
 ) -> tuple[csr_matrix, np.ndarray, FeatureSchema]:
@@ -345,7 +347,7 @@ def build_and_save(
     print("=== Step 1.3: Feature Engineering ===\n")
 
     df, _ = build_game_dataset(
-        db_path=db_path if db_path is not None else _DEFAULT_DB,
+        source if source is not None else _DEFAULT_DB,
         elo_min=elo_min if elo_min is not None else _EMIN,
         elo_max=elo_max if elo_max is not None else _EMAX,
     )

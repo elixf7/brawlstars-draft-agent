@@ -59,6 +59,26 @@ df, vocab = build_game_dataset(ref, elo_min=10, elo_max=23)
 A local season database works the same way — pass a path instead of a ref, and
 the same filters apply.
 
+## Training
+
+A run is described by a config file, not by remembered arguments:
+
+```bash
+uv run bsdraft-train show -c configs/default.toml   # what this run will do
+uv run bsdraft-train fm   -c configs/default.toml   # train the evaluator
+uv run bsdraft-train selfplay -c configs/default.toml
+```
+
+Each stage writes its artifacts and a manifest to `runs/<name>/`, recording the
+seed, the git commit, the exact dataset revision, and the full resolved config —
+so a result can be traced back to what produced it.
+
+Runs are **bit-for-bit reproducible**: the same config and seed produce identical
+weights. Seeding alone is not enough — reduction order stays free and drifts
+weights by about 1e-8, close enough to look right and different enough that two
+runs cannot be compared exactly — so strict deterministic algorithms are enabled
+too.
+
 ```bash
 uv run pytest
 uv run ruff check src/ tests/

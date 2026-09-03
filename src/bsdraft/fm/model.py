@@ -46,6 +46,7 @@ from scipy.sparse import csr_matrix
 from sklearn.metrics import roc_auc_score
 
 from bsdraft.data.prep import build_game_dataset
+from bsdraft.data.sources import DatasetRef
 from bsdraft.features.engineering import (
     SCHEMA_PATH,
     FeatureSchema,
@@ -332,7 +333,7 @@ def train_fm(
     patience: int = PATIENCE,
     model_path: Path = MODEL_PATH,
     schema_path: Path = SCHEMA_PATH,
-    db_path: Path | None = None,
+    source: DatasetRef | str | Path | None = None,
     elo_min: int | None = None,
     elo_max: int | None = None,
 ) -> FMInference:
@@ -362,7 +363,7 @@ def train_fm(
 
     print("\nLoading dataset...")
     df, _ = build_game_dataset(
-        db_path=db_path if db_path is not None else _DEFAULT_DB,
+        source if source is not None else _DEFAULT_DB,
         elo_min=elo_min if elo_min is not None else _EMIN,
         elo_max=elo_max if elo_max is not None else _EMAX,
     )

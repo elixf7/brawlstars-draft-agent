@@ -1,0 +1,32 @@
+# A training run, start to finish. Copy this, change what you need, and pass it
+# with `-c`. Every value here is recorded in the run manifest.
+
+name = "default"
+seed = 20260903
+output_dir = "runs"
+
+[data]
+season   = "season53"
+repo_id  = "EliF77/brawlstars-ranked"
+# revision = "4c45efee..."   # pin to a commit; omitted resolves and records the current one
+# db_path  = "season49/v1_clean.db"   # a local database instead of the Hub
+elo_min  = 10.0
+elo_max  = 23.0
+
+[fm]
+k             = 32
+lr            = 1e-3
+weight_decay  = 1e-4
+batch_size    = 4096
+max_epochs    = 50
+patience      = 5
+
+[selfplay]
+n_iterations         = 5
+n_games_per_iter     = 500
+n_sims_later         = 5000
+n_eval_games         = 200
+n_sims_eval          = 2000
+promotion_threshold  = 0.525
+n_workers            = 1
+resume               = true

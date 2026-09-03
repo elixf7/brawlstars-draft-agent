@@ -60,3 +60,6 @@ wheels/
 .idea/
 .vscode/
 .claude/
+
+# Training run outputs
+runs/

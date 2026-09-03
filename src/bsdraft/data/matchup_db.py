@@ -32,6 +32,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bsdraft.data.sources import DatasetRef
 from bsdraft.data.prep import DB_PATH, TEAM1_BRAWLER_COLS, TEAM2_BRAWLER_COLS, build_game_dataset
 
 # src/bsdraft/<subpackage>/<module>.py -> repository root
@@ -439,6 +440,7 @@ class MatchupDB:
     @classmethod
     def build(
         cls,
+        source: "DatasetRef | str | Path | None" = None,
         db_path: Path = DB_PATH,
         elo_min: int | None = None,
         elo_max: int | None = None,
@@ -447,7 +449,7 @@ class MatchupDB:
         from bsdraft.data.prep import ELO_MIN as _EMIN, ELO_MAX as _EMAX
 
         df, _ = build_game_dataset(
-            db_path,
+            source if source is not None else db_path,
             elo_min=elo_min if elo_min is not None else _EMIN,
             elo_max=elo_max if elo_max is not None else _EMAX,
         )
