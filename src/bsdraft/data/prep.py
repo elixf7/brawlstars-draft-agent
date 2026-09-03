@@ -13,11 +13,19 @@ Key decisions baked in:
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from bsdraft.data.sources import (
+    ALL_BRAWLER_COLS,
+    KEEP_COLS,
+    TEAM1_BRAWLER_COLS,
+    TEAM2_BRAWLER_COLS,
+    DatasetRef,
+    load_matches,
+)
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -53,22 +61,7 @@ SEASON_CONFIGS: dict[str, dict] = {
     },
 }
 
-TEAM1_BRAWLER_COLS = ["t1_b0_name", "t1_b1_name", "t1_b2_name"]
-TEAM2_BRAWLER_COLS = ["t2_b0_name", "t2_b1_name", "t2_b2_name"]
-ALL_BRAWLER_COLS = TEAM1_BRAWLER_COLS + TEAM2_BRAWLER_COLS
 
-# Columns we actually need for modelling — drop the rest to save memory
-KEEP_COLS = [
-    "id",
-    "battle_time",
-    "mode",
-    "map",
-    "record",
-    "avg_elo",
-    "skill_ns",
-    *TEAM1_BRAWLER_COLS,
-    *TEAM2_BRAWLER_COLS,
-]
 
 
 # ---------------------------------------------------------------------------
@@ -77,28 +70,21 @@ KEEP_COLS = [
 
 
 def load_filtered_matches(
-    db_path: Path = DB_PATH,
+    source: DatasetRef | str | Path = DB_PATH,
     elo_min: int = ELO_MIN,
     elo_max: int = ELO_MAX,
 ) -> pd.DataFrame:
-    """
-    Pull matches from SQLite with quality filters applied at the SQL level
-    (faster than filtering in pandas for large tables).
+    """Load matches with quality filters applied at read time.
 
-    Filters:
-      - skill_ns_ok = 1  (ECDF score computed from a well-populated time bin)
-      - avg_elo BETWEEN elo_min AND elo_max
-    """
-    query = f"""
-        SELECT {", ".join(KEEP_COLS)}
-        FROM matches
-        WHERE skill_ns_ok = 1
-          AND avg_elo BETWEEN {elo_min} AND {elo_max}
-    """
-    with sqlite3.connect(db_path) as conn:
-        df = pd.read_sql_query(query, conn)
+    `source` is either a path to a local season database or a DatasetRef
+    naming a season at an exact commit of the published dataset. Filters are
+    identical either way:
 
-    print(f"Loaded {len(df):,} rows after quality filters.")
+      - skill_ns_ok = 1  (ECDF score from a well-populated time bin)
+      - avg_elo between elo_min and elo_max
+    """
+    df = load_matches(source, elo_min=elo_min, elo_max=elo_max)
+    print(f"Loaded {len(df):,} rows after quality filters from {source}.")
     return df
 
 
@@ -249,7 +235,7 @@ def check_label_balance(df: pd.DataFrame) -> None:
 
 
 def build_game_dataset(
-    db_path: Path = DB_PATH,
+    source: DatasetRef | str | Path = DB_PATH,
     elo_min: int = ELO_MIN,
     elo_max: int = ELO_MAX,
     draw_value: float = None,
@@ -266,7 +252,7 @@ def build_game_dataset(
     vocab : list[str]
         Sorted brawler vocabulary.
     """
-    df = load_filtered_matches(db_path, elo_min=elo_min, elo_max=elo_max)
+    df = load_filtered_matches(source, elo_min=elo_min, elo_max=elo_max)
     df = drop_incomplete_teams(df)
     df = expand_to_games(df, draw_value=draw_value)
     vocab = build_brawler_vocab(df, min_picks=min_brawler_picks)

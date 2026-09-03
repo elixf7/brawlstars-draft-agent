@@ -36,6 +36,29 @@ Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
+## Getting the data
+
+Training reads from the published dataset rather than a local file, pinned to an
+exact commit — a model trained against "the dataset" is not reproducible, because
+the dataset grows every time the ETL pipeline runs.
+
+```bash
+uv run bsdraft-data seasons                    # what's available
+uv run bsdraft-data resolve season53           # pin it to a commit
+uv run bsdraft-data summary season53 --games   # load it as training does
+```
+
+```python
+from bsdraft.data.prep import build_game_dataset
+from bsdraft.data.sources import resolve_dataset
+
+ref = resolve_dataset("season53")              # -> EliF77/...@4c45efee:season53
+df, vocab = build_game_dataset(ref, elo_min=10, elo_max=23)
+```
+
+A local season database works the same way — pass a path instead of a ref, and
+the same filters apply.
+
 ```bash
 uv run pytest
 uv run ruff check src/ tests/

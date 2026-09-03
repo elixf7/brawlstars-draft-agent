@@ -8,15 +8,20 @@ license = { file = "LICENSE" }
 authors = [{ name = "Eli Fried", email = "elixf7@gmail.com" }]
 keywords = ["machine-learning", "monte-carlo-tree-search", "self-play", "factorization-machines", "brawl-stars"]
 dependencies = [
+    "huggingface-hub>=1.30.0",
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.10.8",
     "numpy>=2.4.3",
     "pandas>=3.0.1",
+    "pyarrow>=25.0.1",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
     "torch>=2.10.0",
 ]
+
+[project.scripts]
+bsdraft-data = "bsdraft.cli.data:main"
 
 [project.urls]
 Repository = "https://github.com/elixf7/brawlstars-draft-agent"
