@@ -1,0 +1,99 @@
+name: Train
+
+# Fridays, after the ETL pipeline's Thursday pull has landed. The
+# win-probability model is retrained every week because more data still helps —
+# there is no plateau at a million games — and it trains in about twenty
+# seconds. Self-play runs twice a season instead: it plateaus after one
+# iteration, so weekly runs would spend time re-learning the same thing.
+on:
+  schedule:
+    - cron: "0 7 * * 5"
+  workflow_dispatch:
+    inputs:
+      force_selfplay:
+        description: "Run self-play regardless of the week"
+        type: boolean
+        default: false
+      publish:
+        description: "Deploy the dashboard"
+        type: boolean
+        default: true
+
+concurrency:
+  group: bsdraft-train
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  CONFIG: configs/season53.toml
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+
+      # Which season, and how far into it — self-play is worth running only
+      # once there is enough new data to be worth distilling.
+      - name: Where are we in the season
+        run: |
+          uv run python - <<'PY' >> "$GITHUB_ENV"
+          from bsdraft.schedule import should_run_selfplay, weeks_into_season
+          print(f"SEASON_WEEK={weeks_into_season()}")
+          print(f"RUN_SELFPLAY={'true' if should_run_selfplay() else 'false'}")
+          PY
+          uv run python -c "from bsdraft.schedule import *; print(f'season started {season_start(__import__(\"datetime\").date.today())}, week {weeks_into_season()}')"
+
+      - name: Train the win-probability model
+        run: uv run bsdraft-train fm -c "$CONFIG"
+
+      # The gate. Below roughly 100,000 games the model scores worse than
+      # counting character-and-map win rates, so early in a season it can
+      # genuinely be worse than a lookup table. Nothing ships unless it wins.
+      - name: Check it beats the baselines
+        run: uv run bsdraft-eval -c "$CONFIG" --require-beat-baselines
+
+      - name: Self-play
+        if: env.RUN_SELFPLAY == 'true' || inputs.force_selfplay
+        run: uv run bsdraft-train selfplay -c configs/selfplay.toml
+
+      - name: Build the dashboard
+        run: uv run bsdraft-dashboard -c "$CONFIG" --out site/index.html
+
+      - name: Package the dashboard
+        if: github.event_name == 'schedule' || inputs.publish
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Keep the run summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ github.run_id }}
+          path: |
+            runs/**/fm_manifest.json
+            runs/**/evaluation.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+  deploy:
+    needs: train
+    if: always() && needs.train.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true

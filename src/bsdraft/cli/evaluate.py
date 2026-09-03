@@ -60,6 +60,14 @@ def main() -> None:
     p.add_argument("--baselines-only", action="store_true",
                    help="Skip the model; useful before one is trained")
     p.add_argument("--json", default=None, help="Also write the comparison here")
+    p.add_argument("--require-beat-baselines", action="store_true",
+                   help="Exit non-zero unless the model is fit to publish")
+    p.add_argument("--min-train-games", type=int, default=100_000,
+                   help="Absolute floor on training volume for the gate. Measured, "
+                        "a model below roughly this loses to a well-fit lookup "
+                        "table (default: 100,000)")
+    p.add_argument("--min-val-games", type=int, default=10_000,
+                   help="Floor on held-out volume, so the comparison means something")
     args = p.parse_args()
 
     try:
@@ -119,6 +127,55 @@ def main() -> None:
                                    for m, v in row.items() if m != "name"})
     store.finish(run_id)
     print(f"logged run {run_id}")
+
+    if args.require_beat_baselines:
+        _gate(comparison, args)
+
+
+def _gate(comparison, args) -> None:
+    """Decide whether this model is fit to publish.
+
+    Three separate questions, because beating the baselines is not on its own
+    enough. The baselines are fit on the same rows as the model, so on a thin
+    season they weaken alongside it and the comparison flatters everything —
+    a model trained on eight rows can "win". Hence an absolute floor too.
+    """
+    import math
+
+    failures = []
+    if comparison.n_train < args.min_train_games:
+        failures.append(
+            f"trained on {comparison.n_train:,} games, below the "
+            f"{args.min_train_games:,} floor — a model this size loses to a "
+            f"well-fit lookup table"
+        )
+    if comparison.n_val < args.min_val_games:
+        failures.append(
+            f"only {comparison.n_val:,} held-out games, below the "
+            f"{args.min_val_games:,} needed for the comparison to mean anything"
+        )
+
+    model = next((r for r in comparison.rows
+                  if r["name"] == "factorization machine"), None)
+    if model is None:
+        failures.append("no model was scored")
+    elif math.isnan(model["auc"]):
+        failures.append("AUC is undefined — the held-out set has one class only")
+    else:
+        best = comparison.best
+        if best and best["name"] != "factorization machine":
+            failures.append(
+                f"{best['name']} scores {best['logloss']:.4f}, better than the "
+                f"model's {model['logloss']:.4f}"
+            )
+
+    if failures:
+        raise SystemExit(
+            "\ngate FAILED — not fit to publish:\n"
+            + "\n".join(f"  - {f}" for f in failures)
+        )
+    print(f"\ngate passed: {comparison.n_train:,} train / {comparison.n_val:,} val, "
+          f"model beats every baseline.")
 
 
 if __name__ == "__main__":

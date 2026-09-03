@@ -67,3 +67,6 @@ wheels/
 
 # Training run outputs
 runs/
+
+# Generated dashboard
+site/

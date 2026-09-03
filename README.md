@@ -109,6 +109,20 @@ uv run bsdraft-data seasons          # what's published
 uv run bsdraft-data resolve season53 # pin it to a commit
 ```
 
+## Try it
+
+**[elixf7.github.io/brawlstars-draft-agent](https://elixf7.github.io/brawlstars-draft-agent/)** —
+a mock draft you can play with. Pick characters for either side, change the map,
+and the win probability updates as you go, along with a ranked list of the best
+next pick for whoever's turn it is.
+
+The model is small enough (29,354 parameters) to ship to the browser whole, so
+the page runs inference itself — no server, no latency. That is a consequence of
+the factorized design rather than an accident.
+
+The page also carries live season analytics from the companion pipeline: games
+collected per day, the most-picked characters, and the baseline comparison above.
+
 ## Running it
 
 Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
@@ -148,6 +162,7 @@ Every run records what produced it: parameters, metrics, the git commit, the
 dataset revision, and the artifacts it wrote with their content hashes.
 
 ```bash
+uv run bsdraft-dashboard -c configs/season53.toml   # rebuild the page
 uv run bsdraft-runs list                       # recent runs and their metrics
 uv run bsdraft-runs best --metric val_logloss  # the winner, and where its model is
 uv run bsdraft-runs compare <run-a> <run-b>
@@ -164,6 +179,28 @@ val_logloss            0.6930          0.6929          0.6932
 config differences
   fm.k                       64              32               8
 ```
+
+## Retraining
+
+[`.github/workflows/train.yml`](.github/workflows/train.yml) runs every Friday,
+after the pipeline's Thursday collection.
+
+```
+retrain model  ──▶  gate  ──▶  self-play  ──▶  dashboard  ──▶  Pages
+   ~20 seconds     must beat    weeks 2 & 4     rebuilt       deployed
+                   baselines    of the season
+```
+
+The cadence is asymmetric because the two stages behave differently. The model
+keeps improving as data accumulates and trains in seconds, so it runs weekly.
+Self-play plateaus after a single iteration — measured, iterations 2 and 3 scored
+0.498 and 0.501 against iteration 1 — so it runs twice a season instead: once
+there is enough new data to distil, and again once the meta has settled.
+
+**Nothing publishes unless it earns it.** The gate requires the model to beat
+every baseline, on at least 100,000 training and 10,000 held-out games. That
+floor is not arbitrary: below it the model scores worse than a lookup table, so
+early in a season the previous model stays in place.
 
 ## Layout
 
