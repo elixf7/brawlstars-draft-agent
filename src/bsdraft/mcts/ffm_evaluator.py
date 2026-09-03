@@ -17,28 +17,26 @@ from bsdraft.fm.ffm import FFMInference
 from bsdraft.mcts.state import DraftState
 
 
-class _SchemaView:
-    """The three vocabularies search asks an evaluator for.
+class _ModelView:
+    """Exposes the feature layout that search and self-play expect.
 
-    Search, rollouts and self-play read `evaluator._fm.schema.vocab` in six
-    places. The antisymmetric model holds the same lists under different names,
-    so this exposes them in the shape those call sites expect rather than
-    changing all six and the classic evaluator alongside them.
+    Six call sites read `evaluator._fm.schema` — not for the win-probability
+    model's weights, but for a stable one-hot encoding of a draft state, which
+    the policy network builds its inputs from. That layout is a function of the
+    vocabularies alone, so the real FeatureSchema is reused rather than
+    reimplemented, and the policy network is unchanged whichever evaluator is
+    driving search.
     """
 
-    __slots__ = ("vocab", "maps", "modes")
-
-    def __init__(self, model: FFMInference) -> None:
-        self.vocab = model.vocab
-        self.maps = model.maps
-        self.modes = model.modes
-
-
-class _ModelView:
     __slots__ = ("schema",)
 
     def __init__(self, model: FFMInference) -> None:
-        self.schema = _SchemaView(model)
+        from bsdraft.features.engineering import FeatureSchema
+
+        self.schema = FeatureSchema(
+            vocab=list(model.vocab), maps=list(model.maps),
+            modes=list(model.modes), include_mode=True,
+        )
 
 
 class FFMEvaluator:

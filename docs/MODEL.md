@@ -55,10 +55,11 @@ A field-aware factorization machine, scored as a **difference between the two
 teams**:
 
 ```
-logit = [ strength + synergy + context ](team 1)
-      − [ strength + synergy + context ](team 2)
+logit = own(team 1) - own(team 2)
       + counter(team 1 attacking team 2)
-      − counter(team 2 attacking team 1)
+      - counter(team 2 attacking team 1)
+
+where own(team) = strength + synergy + context
 ```
 
 Each character gets several small vectors rather than one, because the roles are
