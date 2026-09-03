@@ -17,6 +17,7 @@ from pathlib import Path
 from bsdraft.config import ConfigError, RunConfig, load_config
 from bsdraft.data.sources import DatasetError, DatasetRef, resolve_dataset
 from bsdraft.seeding import seed_everything
+from bsdraft.tracking import RunStore
 
 
 def _git_commit() -> str | None:
@@ -57,26 +58,62 @@ def write_manifest(cfg: RunConfig, stage: str, source, extra: dict) -> Path:
     return path
 
 
+def store_for(cfg: RunConfig) -> RunStore:
+    """One store per output directory, shared by every run in it."""
+    base = cfg.run_dir.parent
+    return RunStore(base / "registry.db")
+
+
 def cmd_fm(cfg: RunConfig) -> int:
     from bsdraft.fm.model import train_fm
 
     source = resolve_source(cfg)
     seed_everything(cfg.seed)
     cfg.run_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[{cfg.name}] fm  seed={cfg.seed}  source={source}")
+    store = store_for(cfg)
+    run_id = store.start(
+        name=cfg.name, stage="fm", seed=cfg.seed, git_commit=_git_commit(),
+        dataset=str(source), config=cfg.to_dict(),
+    )
+    print(f"[{run_id}] fm  seed={cfg.seed}  source={source}")
 
     started = time.monotonic()
-    train_fm(
-        k=cfg.fm.k, lr=cfg.fm.lr, weight_decay=cfg.fm.weight_decay,
-        batch_size=cfg.fm.batch_size, max_epochs=cfg.fm.max_epochs,
-        patience=cfg.fm.patience,
-        model_path=cfg.run_dir / "fm_model.pkl",
-        schema_path=cfg.run_dir / "feature_schema.pkl",
-        source=source, elo_min=cfg.data.elo_min, elo_max=cfg.data.elo_max,
-    )
-    m = write_manifest(cfg, "fm", source,
-                       {"elapsed_seconds": round(time.monotonic() - started, 1)})
+    try:
+        inference = train_fm(
+            k=cfg.fm.k, lr=cfg.fm.lr, weight_decay=cfg.fm.weight_decay,
+            batch_size=cfg.fm.batch_size, max_epochs=cfg.fm.max_epochs,
+            patience=cfg.fm.patience,
+            model_path=cfg.run_dir / "fm_model.pkl",
+            schema_path=cfg.run_dir / "feature_schema.pkl",
+            source=source, elo_min=cfg.data.elo_min, elo_max=cfg.data.elo_max,
+        )
+    except BaseException as e:
+        store.finish(run_id, status="failed", error=f"{type(e).__name__}: {e}",
+                     elapsed_seconds=round(time.monotonic() - started, 1))
+        raise
+
+    elapsed = round(time.monotonic() - started, 1)
+    store.log_metrics(run_id, {
+        "val_logloss": getattr(inference, "val_logloss", None),
+        "val_auc": getattr(inference, "val_auc", None),
+        "val_brier": getattr(inference, "val_brier", None),
+        "n_train": getattr(inference, "n_train", None),
+        "n_val": getattr(inference, "n_val", None),
+    })
+    # Per-epoch history, so a run's training curve survives the run.
+    for epoch, entry in enumerate(getattr(inference, "train_history", []) or [], start=1):
+        values = entry if isinstance(entry, dict) else {}
+        if values:
+            store.log_metrics(run_id, {
+                k: v for k, v in values.items() if isinstance(v, int | float)
+            }, step=epoch)
+    for name in ("fm_model.pkl", "feature_schema.pkl"):
+        store.log_artifact(run_id, name, cfg.run_dir / name)
+    store.finish(run_id, elapsed_seconds=elapsed)
+
+    m = write_manifest(cfg, "fm", source, {"run_id": run_id, "elapsed_seconds": elapsed})
     print(f"wrote {m}")
+    print(f"logged run {run_id} to {store.path}")
     return 0
 
 
@@ -107,21 +144,46 @@ def cmd_selfplay(cfg: RunConfig) -> int:
         n_workers=cfg.selfplay.n_workers,
         seed=cfg.seed,
     )
-    started = time.monotonic()
-    results = run_iteration_loop(
-        n_iterations=cfg.selfplay.n_iterations,
-        data_dir=cfg.run_dir,
-        map_mode_pairs=load_map_mode_pairs(source),
-        config=iter_cfg,
-        evaluator=evaluator,
-        db=db,
-        resume=cfg.selfplay.resume,
+    store = store_for(cfg)
+    run_id = store.start(
+        name=cfg.name, stage="selfplay", seed=cfg.seed, git_commit=_git_commit(),
+        dataset=str(source), config=cfg.to_dict(),
     )
+    started = time.monotonic()
+    try:
+        results = run_iteration_loop(
+            n_iterations=cfg.selfplay.n_iterations,
+            data_dir=cfg.run_dir,
+            map_mode_pairs=load_map_mode_pairs(source),
+            config=iter_cfg,
+            evaluator=evaluator,
+            db=db,
+            resume=cfg.selfplay.resume,
+        )
+    except BaseException as e:
+        store.finish(run_id, status="failed", error=f"{type(e).__name__}: {e}",
+                     elapsed_seconds=round(time.monotonic() - started, 1))
+        raise
+
+    elapsed = round(time.monotonic() - started, 1)
+    # One row per iteration, so promotion decisions can be read back later.
+    for i, r in enumerate(results, start=1):
+        values = {k: v for k, v in vars(r).items() if isinstance(v, int | float)}
+        if values:
+            store.log_metrics(run_id, values, step=i)
+    final = {k: v for k, v in vars(results[-1]).items()
+             if isinstance(v, int | float)} if results else {}
+    store.log_metrics(run_id, {f"final_{k}": v for k, v in final.items()})
+    store.log_metrics(run_id, {"iterations": len(results)})
+    for artifact in sorted(cfg.run_dir.glob("*.pkl")):
+        store.log_artifact(run_id, artifact.name, artifact)
+    store.finish(run_id, elapsed_seconds=elapsed)
+
     m = write_manifest(cfg, "selfplay", source, {
-        "iterations": len(results),
-        "elapsed_seconds": round(time.monotonic() - started, 1),
+        "run_id": run_id, "iterations": len(results), "elapsed_seconds": elapsed,
     })
     print(f"wrote {m}")
+    print(f"logged run {run_id} to {store.path}")
     return 0
 
 

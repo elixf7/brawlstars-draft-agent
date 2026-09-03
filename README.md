@@ -79,6 +79,29 @@ weights by about 1e-8, close enough to look right and different enough that two
 runs cannot be compared exactly — so strict deterministic algorithms are enabled
 too.
 
+## Comparing runs
+
+Every run is recorded — its config, seed, git commit, dataset revision, metrics,
+and the artifacts it produced with their content hashes.
+
+```bash
+uv run bsdraft-runs list                       # recent runs and headline metrics
+uv run bsdraft-runs best --metric val_logloss  # the winner, and where its model is
+uv run bsdraft-runs compare <run-a> <run-b>    # metrics side by side
+```
+
+`compare` also diffs the configs, so the reason two runs differ is on screen next
+to the difference itself:
+
+```
+metric          181322-b0d7bf   181318-f1c952   181314-755698
+val_auc                0.5032          0.5381          0.4821
+val_logloss            0.6930          0.6929          0.6932
+
+config differences
+  fm.k                       64              32               8
+```
+
 ```bash
 uv run pytest
 uv run ruff check src/ tests/
