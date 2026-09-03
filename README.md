@@ -1,148 +1,147 @@
 # Brawl Stars Draft Agent
 
-Recommends the next pick in a Brawl Stars ranked draft. A factorization machine
-estimates win probability from team composition, map, and player skill; Monte
-Carlo tree search plays the draft forward against a modelled opponent; and a
-joint policy+value network trained by self-play replaces heuristic rollouts.
+**Which character should you pick next?**
 
-Data comes from a companion ETL pipeline —
-[brawlstars-data-pipeline](https://github.com/elixf7/brawlstars-data-pipeline) —
-which publishes ranked match telemetry as a versioned dataset.
+Brawl Stars is a team game where two sides alternately pick three characters
+each, before the match starts. Those six picks decide a lot: some characters
+counter others, some work well together, and what's strong depends on the map.
+Once the picking is over, you play the team you built.
 
-> **Status.** The modelling code works and has produced trained models across
-> three seasons. It is being turned into a reproducible pipeline: packaging,
-> a training CLI, experiment tracking, and evaluation against baselines.
+This project learns which picks win, from 1.3 million real ranked games, and
+recommends the next one.
 
-## What's here
+[![CI](https://github.com/elixf7/brawlstars-draft-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/elixf7/brawlstars-draft-agent/actions/workflows/ci.yml)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Dataset](https://img.shields.io/badge/data-Hugging%20Face-yellow)](https://huggingface.co/datasets/EliF77/brawlstars-ranked)
 
+---
+
+## Why this is hard
+
+You are predicting the winner of a match that hasn't been played, from nothing
+but the six characters chosen and the map. No player skill history, no in-game
+events — just the draft.
+
+There is a ceiling on how well anyone can do that. Matches are decided by
+execution as much as by composition, and the better team loses often. A model
+that claimed 90% accuracy here would be broken, not brilliant. The honest
+question is: **how much better than guessing can you get, and is it more than
+you'd get from simply counting?**
+
+## What it achieves
+
+Every predictor below is scored on the same 262,824 games, held out **by time** —
+so the model is judged on matches played after everything it learned from, the
+way it would be used.
+
+| Predictor | What it knows | Log-loss | AUC | Calibration error |
+| --- | --- | ---: | ---: | ---: |
+| Coin flip | Nothing | 0.6931 | 0.500 | 0.001 |
+| Character win rates | Which characters win | 0.6850 | 0.597 | 0.046 |
+| Character × map | ...and where they win | 0.6794 | 0.624 | 0.057 |
+| Head-to-head rates | Which characters beat which | 0.6834 | 0.612 | 0.056 |
+| **This model** | **All of it, jointly** | **0.6598** | **0.644** | **0.005** |
+
+Lower log-loss is better; 0.6931 is what you score knowing nothing at all.
+
+**The model captures more than twice as much signal as the best simple
+alternative** — and that comparison is the result, not the raw number. Counting
+character-and-map win rates already reaches 0.6794, so a model reporting "0.68"
+would have been beaten by a lookup table.
+
+**It also knows how confident to be.** The calibration column measures whether
+"65% likely to win" actually happens 65% of the time. The counting methods rank
+matchups reasonably but are badly overconfident. That distinction matters here
+because the recommender searches thousands of possible drafts and multiplies
+these probabilities together — an evaluator that is confidently wrong compounds
+its error at every step, while one that is honestly uncertain does not.
+
+## How it works
+
+**1. Learn what wins.** A factorization machine over the six characters, the
+map, the mode, and the skill level of the lobby. Rather than one weight per
+character, it learns a small vector for each, so it can express that two
+characters work well *together* or that one *counters* another — the pairwise
+effects that make drafting interesting. Removing those interactions drops AUC
+from 0.644 to 0.581, so that structure is where the value is.
+
+The model scores a draft as the difference between the two teams, which
+guarantees something you'd want to be true: its answer to "does A beat B" is
+always exactly the inverse of "does B beat A". [The earlier version learned this
+approximately and could disagree with itself by up to 0.31.](docs/MODEL.md)
+
+**2. Search ahead.** A single pick isn't good or bad on its own — it depends on
+what the opponent does next. Monte Carlo tree search plays the rest of the draft
+forward against a modelled opponent, so a pick that looks strong but is easily
+countered gets discounted.
+
+**3. Learn to search less.** Self-play distills the search into a network that
+proposes good picks directly, so the recommendation is fast enough to be useful
+mid-draft.
+
+## Where the data comes from
+
+A companion project — **[brawlstars-data-pipeline](https://github.com/elixf7/brawlstars-data-pipeline)** —
+crawls the Brawl Stars API on a schedule and publishes ranked matches as a
+versioned dataset on [Hugging Face](https://huggingface.co/datasets/EliF77/brawlstars-ranked).
+
+This repository reads from that dataset **pinned to an exact revision**. That
+matters more than it sounds: the dataset grows every time the pipeline runs, so
+"trained on the dataset" would not be reproducible. "Trained on commit `4c45efee`"
+is.
+
+```bash
+uv run bsdraft-data seasons          # what's published
+uv run bsdraft-data resolve season53 # pin it to a commit
 ```
-src/bsdraft/
-  data/       match loading, the empirical matchup database
-  features/   sparse feature construction for the win-probability model
-  fm/         the factorization machine: training, calibration, interpretation
-  mcts/       draft state, tree search, rollouts, confidence, recommendation
-  selfplay/   self-play generation, policy and joint policy+value networks
-  pipeline/   stage orchestration
-notebooks/    exploration and the current training entry points
-figures/      calibration curves, brawler and context embeddings, map-skill affinity
-tests/
-```
 
-## Setup
+## Running it
 
 Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
+uv run bsdraft-train fm -c configs/season53.toml   # ~20 seconds
+uv run bsdraft-eval     -c configs/season53.toml   # the table above
 ```
 
-## Getting the data
+A run is described by a config file, not by remembered arguments. Everything it
+needs is in there — the data, the hyperparameters, the seed:
 
-Training reads from the published dataset rather than a local file, pinned to an
-exact commit — a model trained against "the dataset" is not reproducible, because
-the dataset grows every time the ETL pipeline runs.
+```toml
+name = "season53"
+seed = 20260903
 
-```bash
-uv run bsdraft-data seasons                    # what's available
-uv run bsdraft-data resolve season53           # pin it to a commit
-uv run bsdraft-data summary season53 --games   # load it as training does
+[data]
+season  = "season53"
+elo_min = 10.0
+
+[fm]
+model = "ffm"
+k     = 64
+lr    = 1e-3
 ```
-
-```python
-from bsdraft.data.prep import build_game_dataset
-from bsdraft.data.sources import resolve_dataset
-
-ref = resolve_dataset("season53")              # -> EliF77/...@4c45efee:season53
-df, vocab = build_game_dataset(ref, elo_min=10, elo_max=23)
-```
-
-A local season database works the same way — pass a path instead of a ref, and
-the same filters apply.
-
-## Training
-
-A run is described by a config file, not by remembered arguments:
-
-```bash
-uv run bsdraft-train show -c configs/default.toml   # what this run will do
-uv run bsdraft-train fm   -c configs/default.toml   # train the evaluator
-uv run bsdraft-train selfplay -c configs/default.toml
-```
-
-Each stage writes its artifacts and a manifest to `runs/<name>/`, recording the
-seed, the git commit, the exact dataset revision, and the full resolved config —
-so a result can be traced back to what produced it.
 
 Runs are **bit-for-bit reproducible**: the same config and seed produce identical
-weights. Seeding alone is not enough — reduction order stays free and drifts
-weights by about 1e-8, close enough to look right and different enough that two
-runs cannot be compared exactly — so strict deterministic algorithms are enabled
-too.
+weights. Seeding alone doesn't achieve that — floating-point reduction order
+stays free and drifts weights by around 1e-8, close enough to look right and
+different enough that two runs can't be compared — so strict deterministic
+algorithms are enabled as well.
 
-## Results
+## Keeping track of experiments
 
-Season 53, 1,051,296 training games and 262,824 held out **chronologically** — the
-model is judged on matches that happened after everything it learned from.
-
-| Predictor | Log-loss | vs. random | AUC | Brier | ECE |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Constant (base rate) | 0.6931 | +0.0000 | 0.5000 | 0.2500 | 0.0012 |
-| Brawler win rate | 0.6850 | +0.0081 | 0.5971 | 0.2460 | 0.0455 |
-| Brawler × map win rate | 0.6794 | +0.0138 | 0.6240 | 0.2431 | 0.0572 |
-| Pairwise matchup | 0.6834 | +0.0097 | 0.6123 | 0.2452 | 0.0560 |
-| **Antisymmetric FFM** | **0.6598** | **+0.0333** | **0.6441** | **0.2339** | **0.0052** |
-
-Each baseline knows one more thing than the last: nothing, then which brawlers
-win, then which win on this map, then which beat which. The model more than
-doubles the best baseline's lift over random, which is the part worth stating —
-a log-loss on its own says nothing.
-
-The calibration column matters as much as the ranking. Tree search multiplies
-probabilities across plies, so a confident-but-wrong evaluator compounds its
-error at every step. The model's ECE is an order of magnitude better than the
-count-based baselines, which are sharp but overconfident.
-
-### The model
-
-A field-aware factorization machine, scored as a difference between the two
-teams so that `P(A beats B) + P(B beats A) = 1` holds **exactly**, by
-construction. Each brawler gets separate embeddings for playing beside a
-teammate, against an opponent (as attacker and as defender, so counters can be
-directional), and with the map, mode and skill context.
-
-The predecessor gave `t1_SHELLY` and `t2_SHELLY` independent embeddings and
-learned symmetry approximately through flip augmentation. On real games it was
-off by 0.047 on average and up to 0.307 — which matters because tree search
-flips the evaluator to model the opponent, and self-play labels the second team
-`1 - p`. Making symmetry structural fixed that, removed the need for
-augmentation (halving the rows, ~15x faster to train), and improved every metric:
-
-| | Log-loss | AUC | Brier | Symmetry error |
-| --- | ---: | ---: | ---: | ---: |
-| Original FM | 0.6631 | 0.6373 | 0.2354 | 0.047 mean / 0.307 max |
-| Antisymmetric FFM | **0.6598** | **0.6441** | **0.2339** | **0 exact** |
-
-Ablating the interaction terms drops AUC from 0.641 to 0.581, so the pairwise
-structure — not the per-brawler weights — is where the model's edge lives.
+Every run records what produced it: parameters, metrics, the git commit, the
+dataset revision, and the artifacts it wrote with their content hashes.
 
 ```bash
-uv run bsdraft-eval -c configs/season53.toml
-uv run bsdraft-eval --baselines-only     # before a model exists
-```
-
-## Comparing runs
-
-Every run is recorded — its config, seed, git commit, dataset revision, metrics,
-and the artifacts it produced with their content hashes.
-
-```bash
-uv run bsdraft-runs list                       # recent runs and headline metrics
+uv run bsdraft-runs list                       # recent runs and their metrics
 uv run bsdraft-runs best --metric val_logloss  # the winner, and where its model is
-uv run bsdraft-runs compare <run-a> <run-b>    # metrics side by side
+uv run bsdraft-runs compare <run-a> <run-b>
 ```
 
-`compare` also diffs the configs, so the reason two runs differ is on screen next
-to the difference itself:
+`compare` diffs the configurations as well, so *why* two runs differ appears next
+to *how* they differ:
 
 ```
 metric          181322-b0d7bf   181318-f1c952   181314-755698
@@ -153,17 +152,41 @@ config differences
   fm.k                       64              32               8
 ```
 
-```bash
-uv run pytest                      # 128 tests, no network needed
-uv run ruff check src/ tests/
+## Layout
+
+```
+src/bsdraft/
+  data/       loading matches, the head-to-head database
+  features/   turning drafts into model inputs
+  fm/         the win-probability model
+  mcts/       draft state, tree search, recommendation
+  selfplay/   self-play and the networks trained on it
+  eval/       baselines, metrics, and the independent judge
+configs/      run definitions
+notebooks/    exploration
+tests/        138 tests, no network required
 ```
 
-Tests run against a committed sample of 4,000 real games, so feature construction
-and the split are exercised on realistic data rather than rows written to match
-the assumptions being tested.
+## Honest limitations
 
-Training artifacts, feature matrices, and season databases are git-ignored:
-they are reproducible from a config plus the published dataset.
+- **Pick order is unrecoverable.** The API returns the six final characters with
+  no record of who picked when, and no bans. The model sees compositions, not
+  sequences; the search has to assume an order.
+- **Self-play is distillation, not reinforcement learning.** Its training signal
+  is the win-probability model's own opinion, not match outcomes, so it can
+  learn to search more cheaply but cannot exceed what that model knows.
+- **The sample is not uniform.** Matches are gathered by crawling outward from
+  seed players within an elo band, so active and higher-rated players are
+  over-represented.
+- **One season at a time.** Balance changes shift what's strong, so models are
+  trained per season rather than pooled.
+
+## Documentation
+
+| | |
+| --- | --- |
+| [`docs/MODEL.md`](docs/MODEL.md) | The model, why it's built this way, and what the numbers mean |
+| [`docs/DATA.md`](docs/DATA.md) | Where the data comes from and what a row is |
 
 ## License
 

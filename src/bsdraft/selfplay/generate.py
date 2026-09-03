@@ -648,7 +648,7 @@ def run_self_play_game(
 # ── Map/mode helper ───────────────────────────────────────────────────────────
 
 def load_map_mode_pairs(
-    sqlite_path: Path,
+    source,
     known_maps: set[str] | None = None,
 ) -> list[tuple[str, str]]:
     """
@@ -659,8 +659,8 @@ def load_map_mode_pairs(
 
     Parameters
     ----------
-    sqlite_path : path to the season's SQLite file, e.g.
-                  REPO_ROOT / "season48" / "v1_clean.db"
+    source      : a DatasetRef naming a published season, or a path to a local
+                  season database. Either is accepted, as everywhere else.
     known_maps  : if provided, only return pairs whose map name appears in
                   this set. Pass ``set(schema.maps)`` to restrict self-play
                   to maps the FM was actually trained on (avoids KeyError for
@@ -677,13 +677,19 @@ def load_map_mode_pairs(
         pairs = load_map_mode_pairs(SEASON_CONFIGS["s48"]["db_path"])
         games = run_self_play_batch(100, data_dir, pairs)
     """
-    import sqlite3
-    with sqlite3.connect(sqlite_path) as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT map, mode FROM matches ORDER BY map"
-        ).fetchall()
+    from bsdraft.data.sources import DatasetRef, load_matches
+
+    if isinstance(source, DatasetRef):
+        df = load_matches(source, require_skill=False)
+        rows = sorted(df[["map", "mode"]].drop_duplicates().itertuples(index=False, name=None))
+    else:
+        import sqlite3
+        with sqlite3.connect(source) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT map, mode FROM matches ORDER BY map"
+            ).fetchall()
     if not rows:
-        raise RuntimeError(f"No (map, mode) pairs found in {sqlite_path}")
+        raise RuntimeError(f"No (map, mode) pairs found in {source}")
     pairs = [(str(r[0]), str(r[1])) for r in rows]
     if known_maps is not None:
         dropped = {m for m, _ in pairs if m not in known_maps}
@@ -693,7 +699,7 @@ def load_map_mode_pairs(
         pairs = [(m, mode) for m, mode in pairs if m in known_maps]
     if not pairs:
         raise RuntimeError(
-            f"No (map, mode) pairs remain after filtering by known_maps in {sqlite_path}"
+            f"No (map, mode) pairs remain after filtering by known_maps in {source}"
         )
     return pairs
 

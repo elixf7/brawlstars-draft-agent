@@ -134,9 +134,9 @@ def cmd_fm(cfg: RunConfig) -> int:
 
 
 def cmd_selfplay(cfg: RunConfig) -> int:
+    import pickle
+
     from bsdraft.data.matchup_db import MatchupDB
-    from bsdraft.fm.model import FMInference
-    from bsdraft.mcts.evaluator import FMEvaluator
     from bsdraft.selfplay.generate import load_map_mode_pairs
     from bsdraft.selfplay.train import IterationConfig, run_iteration_loop
 
@@ -149,7 +149,18 @@ def cmd_selfplay(cfg: RunConfig) -> int:
         )
     print(f"[{cfg.name}] selfplay  seed={cfg.seed}  source={source}")
 
-    evaluator = FMEvaluator(FMInference.load(model_path))
+    # Either model can drive search; the evaluator wrapper differs.
+    with open(model_path, "rb") as f:
+        trained = pickle.load(f)
+    from bsdraft.fm.ffm import FFMInference
+    if isinstance(trained, FFMInference):
+        from bsdraft.mcts.ffm_evaluator import FFMEvaluator
+        evaluator = FFMEvaluator(trained)
+        known_maps = set(trained.maps)
+    else:
+        from bsdraft.mcts.evaluator import FMEvaluator
+        evaluator = FMEvaluator(trained)
+        known_maps = set(trained.schema.maps)
     db = MatchupDB.build(source, elo_min=cfg.data.elo_min, elo_max=cfg.data.elo_max)
     iter_cfg = IterationConfig(
         n_games_per_iter=cfg.selfplay.n_games_per_iter,
@@ -170,7 +181,7 @@ def cmd_selfplay(cfg: RunConfig) -> int:
         results = run_iteration_loop(
             n_iterations=cfg.selfplay.n_iterations,
             data_dir=cfg.run_dir,
-            map_mode_pairs=load_map_mode_pairs(source),
+            map_mode_pairs=load_map_mode_pairs(source, known_maps=known_maps),
             config=iter_cfg,
             evaluator=evaluator,
             db=db,
