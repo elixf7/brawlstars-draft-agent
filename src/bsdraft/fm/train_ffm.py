@@ -36,10 +36,10 @@ def encode(df: pd.DataFrame, vocab, maps, modes) -> dict[str, np.ndarray]:
     di = {m: i for i, m in enumerate(modes)}
     to_idx = lambda s, lut: s.map(lut).fillna(0).astype(np.int64).to_numpy()  # noqa: E731
 
-    # np.ascontiguousarray: pandas can hand back read-only views, which torch
-    # refuses to wrap without warning.
+    # pandas can hand back read-only views, which torch refuses to wrap without
+    # warning. ascontiguousarray preserves the flag, so copy when it is unset.
     return {
-        key: np.ascontiguousarray(arr)
+        key: arr if arr.flags.writeable else arr.copy()
         for key, arr in {
             "t1": np.stack([to_idx(df[c], vi) for c in TEAM1_BRAWLER_COLS], axis=1),
             "t2": np.stack([to_idx(df[c], vi) for c in TEAM2_BRAWLER_COLS], axis=1),
