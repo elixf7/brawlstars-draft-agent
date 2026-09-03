@@ -32,31 +32,27 @@ NOTE on symmetric augmentation:
 from __future__ import annotations
 
 import pickle
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix, save_npz, load_npz
+from scipy.sparse import csr_matrix, load_npz, save_npz
 
 # Ensure src/ is on the path so intra-package imports work whether this module
 # is imported as `src.feature_engineering` (from repo root) or run directly.
-_SRC_DIR = str(Path(__file__).resolve().parent)
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
-
-from data_prep import (  # noqa: E402
-    build_game_dataset,
+from bsdraft.data.prep import (
     TEAM1_BRAWLER_COLS,
     TEAM2_BRAWLER_COLS,
+    build_game_dataset,
 )
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# src/bsdraft/<subpackage>/<module>.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data"
 
 SCHEMA_PATH = DATA_DIR / "feature_schema.pkl"
@@ -134,7 +130,7 @@ class FeatureSchema:
         print(f"Schema saved → {path}")
 
     @staticmethod
-    def load(path: Path = SCHEMA_PATH) -> "FeatureSchema":
+    def load(path: Path = SCHEMA_PATH) -> FeatureSchema:
         with open(path, "rb") as f:
             return pickle.load(f)
 
@@ -207,7 +203,6 @@ def build_feature_matrix(
     #      3 (t1 brawlers) + 3 (t2 brawlers) + 1 (map) + 1 (mode) + 1 (skill_ns)
     #    = 9 if include_mode else 8
     # ------------------------------------------------------------------
-    nz_per_row = 9 if schema.include_mode else 8
 
     # Row index arrays
     orig_rows = np.arange(N, dtype=np.int32) * 2        # [0, 2, 4, ...]
@@ -278,7 +273,7 @@ def build_feature_matrix(
 
 def build_schema(df: pd.DataFrame, include_mode: bool = True) -> FeatureSchema:
     """Build a FeatureSchema from the vocabulary present in df."""
-    from data_prep import build_brawler_vocab
+    from bsdraft.data.prep import build_brawler_vocab
 
     vocab = build_brawler_vocab(df)
     maps = sorted(df["map"].unique().tolist())
@@ -343,7 +338,9 @@ def build_and_save(
 
     Returns (X, y, schema).
     """
-    from data_prep import DB_PATH as _DEFAULT_DB, ELO_MIN as _EMIN, ELO_MAX as _EMAX  # noqa: E402
+    from bsdraft.data.prep import DB_PATH as _DEFAULT_DB
+    from bsdraft.data.prep import ELO_MAX as _EMAX
+    from bsdraft.data.prep import ELO_MIN as _EMIN
 
     print("=== Step 1.3: Feature Engineering ===\n")
 
@@ -411,7 +408,8 @@ def load_feature_matrix(
 
 if __name__ == "__main__":
     import argparse
-    from data_prep import SEASON_CONFIGS  # noqa: E402
+
+    from bsdraft.data.prep import SEASON_CONFIGS
 
     parser = argparse.ArgumentParser(description="Build FM feature matrix for a given season.")
     parser.add_argument(

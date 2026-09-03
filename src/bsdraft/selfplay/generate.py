@@ -56,41 +56,22 @@ from collections import deque
 from dataclasses import dataclass
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
-try:
-    from src.draft_state import DraftState, apply_pick
-    from src.fm_integration import FMEvaluator
-    from src.fm_model import FMInference
-    from src.matchup_db import MatchupDB, skill_ns_to_tier
-    from src.mcts_node import UCB1_C
-    from src.policy_net import PolicyInference
-    from src.joint_net import JointNetInference
-    from src.recommend import _run_mcts
-    from src.rollout import (
-        DEFAULT_MIN_COUNTER_GAMES,
-        DEFAULT_MY_COUNTER_WEIGHT,
-        DEFAULT_OPP_COUNTER_WEIGHT,
-        RolloutWeightCache,
-    )
-except ModuleNotFoundError:
-    from draft_state import DraftState, apply_pick
-    from fm_integration import FMEvaluator
-    from fm_model import FMInference
-    from matchup_db import MatchupDB, skill_ns_to_tier
-    from mcts_node import UCB1_C
-    from policy_net import PolicyInference
-    from joint_net import JointNetInference
-    from recommend import _run_mcts
-    from rollout import (
-        DEFAULT_MIN_COUNTER_GAMES,
-        DEFAULT_MY_COUNTER_WEIGHT,
-        DEFAULT_OPP_COUNTER_WEIGHT,
-        RolloutWeightCache,
-    )
-
+from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+from bsdraft.fm.model import FMInference
+from bsdraft.mcts.evaluator import FMEvaluator
+from bsdraft.mcts.node import UCB1_C
+from bsdraft.mcts.recommend import _run_mcts
+from bsdraft.mcts.rollout import (
+    DEFAULT_MY_COUNTER_WEIGHT,
+    DEFAULT_OPP_COUNTER_WEIGHT,
+    RolloutWeightCache,
+)
+from bsdraft.mcts.state import DraftState, apply_pick
+from bsdraft.selfplay.joint_net import JointNetInference
+from bsdraft.selfplay.policy_net import PolicyInference
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -269,7 +250,7 @@ class ReplayBuffer:
         return path
 
     @classmethod
-    def load(cls, save_dir: Path, max_games: int = DEFAULT_MAX_GAMES) -> "ReplayBuffer":
+    def load(cls, save_dir: Path, max_games: int = DEFAULT_MAX_GAMES) -> ReplayBuffer:
         """
         Reconstruct a ReplayBuffer from the most recent batch files on disk.
 
@@ -490,9 +471,9 @@ def run_self_play_game(
     min_counter_games: int = _SP_MIN_COUNTER_GAMES,
     visit_dist_top_n: int = DEFAULT_VISIT_DIST_TOP_N,
     pick_temperature: float = DEFAULT_PICK_TEMPERATURE,
-    rng: Optional[np.random.Generator] = None,
-    policy: Optional["PolicyInference"] = None,
-    value_net: Optional["JointNetInference"] = None,
+    rng: np.random.Generator | None = None,
+    policy: PolicyInference | None = None,
+    value_net: JointNetInference | None = None,
     ban_top_n: int = _SP_BAN_TOP_N,
     ban_p: float = _SP_BAN_P,
     max_bans: int = _SP_MAX_BANS,
@@ -692,7 +673,7 @@ def load_map_mode_pairs(
 
     Example
     -------
-        from data_prep import SEASON_CONFIGS
+        from bsdraft.data.prep import SEASON_CONFIGS
         pairs = load_map_mode_pairs(SEASON_CONFIGS["s48"]["db_path"])
         games = run_self_play_batch(100, data_dir, pairs)
     """
@@ -721,10 +702,10 @@ def load_map_mode_pairs(
 
 # Process-local globals set by _worker_init. Using globals avoids re-pickling
 # large objects (FM weights, matchup matrices, policy tensors) for every task.
-_g_evaluator: Optional[FMEvaluator] = None
-_g_db: Optional[MatchupDB] = None
-_g_policy: Optional["PolicyInference"] = None
-_g_value_net: Optional["JointNetInference"] = None
+_g_evaluator: FMEvaluator | None = None
+_g_db: MatchupDB | None = None
+_g_policy: PolicyInference | None = None
+_g_value_net: JointNetInference | None = None
 
 
 def _worker_init(data_dir: Path) -> None:
@@ -772,13 +753,13 @@ def run_self_play_batch(
     n_games: int,
     data_dir: Path,
     map_mode_pairs: list[tuple[str, str]],
-    replay_buffer: Optional[ReplayBuffer] = None,
+    replay_buffer: ReplayBuffer | None = None,
     *,
-    evaluator: Optional[FMEvaluator] = None,
-    db: Optional[MatchupDB] = None,
+    evaluator: FMEvaluator | None = None,
+    db: MatchupDB | None = None,
     n_workers: int = 1,
     start_game_idx: int = 0,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     n_sims_per_pick: int = DEFAULT_N_SIMS_PER_PICK,
     skill_ns_choices: tuple[float, ...] = DEFAULT_SKILL_NS_CHOICES,
     opp_rollout_mode: str = _SP_OPP_ROLLOUT_MODE,
@@ -787,8 +768,8 @@ def run_self_play_batch(
     min_counter_games: int = _SP_MIN_COUNTER_GAMES,
     visit_dist_top_n: int = DEFAULT_VISIT_DIST_TOP_N,
     pick_temperature: float = DEFAULT_PICK_TEMPERATURE,
-    policy: Optional["PolicyInference"] = None,
-    value_net: Optional["JointNetInference"] = None,
+    policy: PolicyInference | None = None,
+    value_net: JointNetInference | None = None,
     ban_top_n: int = _SP_BAN_TOP_N,
     ban_p: float = _SP_BAN_P,
     max_bans: int = _SP_MAX_BANS,
@@ -829,7 +810,7 @@ def run_self_play_batch(
 
     Example
     -------
-        from data_prep import SEASON_CONFIGS
+        from bsdraft.data.prep import SEASON_CONFIGS
         from pathlib import Path
 
         data_dir = Path("data/s48")

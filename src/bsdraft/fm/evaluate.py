@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import math
-import sys
 import time
 from pathlib import Path
 
@@ -26,19 +25,15 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import log_loss, roc_auc_score
 
-_SRC_DIR = str(Path(__file__).resolve().parent)
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
-
-from data_prep import build_game_dataset  # noqa: E402
-from feature_engineering import (  # noqa: E402
-    FeatureSchema,
+from bsdraft.data.prep import build_game_dataset
+from bsdraft.features.engineering import (
     build_feature_matrix,
     chronological_split,
 )
-from fm_model import FMInference, _csr_to_compact  # noqa: E402
+from bsdraft.fm.model import FMInference, _csr_to_compact
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# src/bsdraft/<subpackage>/<module>.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 FIGURES_DIR = REPO_ROOT / "figures"
 
 
@@ -231,7 +226,7 @@ def plot_calibration_curves(
 
     # Per mode
     mode_eces: dict[str, float] = {}
-    for ax, mode in zip(axes[1:], modes):
+    for ax, mode in zip(axes[1:], modes, strict=True):
         mask = val_df["mode"].values == mode
         ece_m = _draw_cal_axis(ax, probs[mask], labels[mask], mode, n_bins)
         mode_eces[mode] = ece_m

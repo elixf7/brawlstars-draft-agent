@@ -23,14 +23,14 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from fm_model import FMInference
+    from bsdraft.fm.model import FMInference
 
 
 # ---------------------------------------------------------------------------
 # Raw embedding extractors
 # ---------------------------------------------------------------------------
 
-def get_brawler_embeddings(inf: "FMInference") -> tuple[np.ndarray, np.ndarray]:
+def get_brawler_embeddings(inf: FMInference) -> tuple[np.ndarray, np.ndarray]:
     """
     Returns
     -------
@@ -44,19 +44,19 @@ def get_brawler_embeddings(inf: "FMInference") -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-def get_map_embeddings(inf: "FMInference") -> np.ndarray:
+def get_map_embeddings(inf: FMInference) -> np.ndarray:
     """Map embedding matrix: (M, k)."""
     sc = inf.schema
     return inf.V[sc.map_offset: sc.mode_offset]
 
 
-def get_mode_embeddings(inf: "FMInference") -> np.ndarray:
+def get_mode_embeddings(inf: FMInference) -> np.ndarray:
     """Mode embedding matrix: (Mo, k)."""
     sc = inf.schema
     return inf.V[sc.mode_offset: sc.skill_offset]
 
 
-def get_skill_embedding(inf: "FMInference") -> np.ndarray:
+def get_skill_embedding(inf: FMInference) -> np.ndarray:
     """Skill_ns embedding vector: (k,)."""
     return inf.V[inf.schema.skill_offset]
 
@@ -65,7 +65,7 @@ def get_skill_embedding(inf: "FMInference") -> np.ndarray:
 # Brawler synergy & counter (second-order interactions)
 # ---------------------------------------------------------------------------
 
-def top_counter_pairs(inf: "FMInference", n: int = 10) -> pd.DataFrame:
+def top_counter_pairs(inf: FMInference, n: int = 10) -> pd.DataFrame:
     """
     Top counter pairs by FM embedding dot product.
 
@@ -94,7 +94,7 @@ def top_counter_pairs(inf: "FMInference", n: int = 10) -> pd.DataFrame:
 # Brawler importance (first-order linear weights)
 # ---------------------------------------------------------------------------
 
-def brawler_importance(inf: "FMInference") -> pd.DataFrame:
+def brawler_importance(inf: FMInference) -> pd.DataFrame:
     """
     Brawler importance from FM linear (first-order) weights.
 
@@ -107,7 +107,6 @@ def brawler_importance(inf: "FMInference") -> pd.DataFrame:
     Columns: brawler, w_t1, w_t2, net_power
     """
     sc = inf.schema
-    V = len(sc.vocab)
     w_t1 = inf.w_linear[sc.t1_offset: sc.t2_offset].astype(float)
     w_t2 = inf.w_linear[sc.t2_offset: sc.map_offset].astype(float)
     net  = w_t1 - w_t2
@@ -125,7 +124,7 @@ def brawler_importance(inf: "FMInference") -> pd.DataFrame:
 # Skill scaling (skill_ns interaction)
 # ---------------------------------------------------------------------------
 
-def skill_scaling_ranking(inf: "FMInference") -> pd.DataFrame:
+def skill_scaling_ranking(inf: FMInference) -> pd.DataFrame:
     """
     Rank brawlers by their interaction with skill_ns.
 
@@ -147,7 +146,7 @@ def skill_scaling_ranking(inf: "FMInference") -> pd.DataFrame:
 # Map analysis
 # ---------------------------------------------------------------------------
 
-def map_skill_affinity(inf: "FMInference") -> pd.DataFrame:
+def map_skill_affinity(inf: FMInference) -> pd.DataFrame:
     """
     Rank maps by their interaction with skill_ns.
 

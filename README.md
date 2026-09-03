@@ -15,11 +15,18 @@ which publishes ranked match telemetry as a versioned dataset.
 
 ## What's here
 
-| | |
-| --- | --- |
-| `src/` | Feature engineering, the FM evaluator, MCTS, self-play, and the joint network |
-| `notebooks/` | Exploration and the current training entry points |
-| `figures/` | Calibration curves, brawler and context embeddings, map–skill affinity |
+```
+src/bsdraft/
+  data/       match loading, the empirical matchup database
+  features/   sparse feature construction for the win-probability model
+  fm/         the factorization machine: training, calibration, interpretation
+  mcts/       draft state, tree search, rollouts, confidence, recommendation
+  selfplay/   self-play generation, policy and joint policy+value networks
+  pipeline/   stage orchestration
+notebooks/    exploration and the current training entry points
+figures/      calibration curves, brawler and context embeddings, map-skill affinity
+tests/
+```
 
 ## Setup
 
@@ -27,6 +34,11 @@ Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
+```
+
+```bash
+uv run pytest
+uv run ruff check src/ tests/
 ```
 
 Training artifacts, feature matrices, and season databases are git-ignored:

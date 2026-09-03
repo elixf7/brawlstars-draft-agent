@@ -48,11 +48,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
-from draft_state import DraftState, available_actions, apply_pick
+from bsdraft.mcts.state import DraftState, apply_pick, available_actions
 
 # ── Exploration constant ───────────────────────────────────────────────────────
 
@@ -103,7 +102,7 @@ class MCTSNode:
     """
 
     state: DraftState
-    parent: Optional[MCTSNode] = field(default=None, repr=False)
+    parent: MCTSNode | None = field(default=None, repr=False)
     children: dict[str, MCTSNode] = field(default_factory=dict)
     visit_count: int = 0
     value_sum: float = 0.0
@@ -117,12 +116,12 @@ class MCTSNode:
     # _child_priors : normalized prior probability for each action (PUCT, Step 3.2).
     #   Set only at opponent-turn nodes; None at my-turn nodes → UCB1 used instead.
     #   Sorted descending during expand() so lazy creation visits high-prior children first.
-    _all_actions: Optional[list] = field(default=None, repr=False, compare=False)
-    _child_list: Optional[list] = field(default=None, repr=False, compare=False)
-    _child_visits: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
-    _child_values: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
-    _child_node_idx: Optional[dict] = field(default=None, repr=False, compare=False)
-    _child_priors: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
+    _all_actions: list | None = field(default=None, repr=False, compare=False)
+    _child_list: list | None = field(default=None, repr=False, compare=False)
+    _child_visits: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _child_values: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _child_node_idx: dict | None = field(default=None, repr=False, compare=False)
+    _child_priors: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     # ── Derived properties ────────────────────────────────────────────────────
 
@@ -167,7 +166,7 @@ class MCTSNode:
         self,
         vocab: tuple[str, ...],
         *,
-        prior_weights: Optional[np.ndarray] = None,
+        prior_weights: np.ndarray | None = None,
     ) -> None:
         """
         Record all legal actions and pre-allocate UCB1/PUCT arrays, but do NOT
@@ -219,7 +218,7 @@ def ucb1_score(
     c: float,
     *,
     flip: bool = False,
-    prior: Optional[float] = None,
+    prior: float | None = None,
 ) -> float:
     """
     UCB1 or PUCT score for `node` given its parent has been visited `parent_visits` times.
@@ -339,7 +338,7 @@ def select_child(node: MCTSNode, c: float = UCB1_C) -> tuple[str, MCTSNode]:
     log_n: float | None = None
     best_score = -math.inf
     best_action: str | None = None
-    best_child: Optional[MCTSNode] = None
+    best_child: MCTSNode | None = None
 
     for action, child in node.children.items():
         vc = child.visit_count
@@ -423,12 +422,7 @@ def backpropagate(path: list[MCTSNode], win_prob: float) -> None:
 # ── Sanity checks ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
 
-    _SRC = str(Path(__file__).resolve().parent)
-    if _SRC not in sys.path:
-        sys.path.insert(0, _SRC)
 
     print("=== Steps 2.2 & 2.5 Sanity Checks ===\n")
 

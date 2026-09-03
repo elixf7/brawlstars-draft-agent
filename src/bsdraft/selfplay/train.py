@@ -48,73 +48,37 @@ import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
-try:
-    from src.draft_state import DraftState, apply_pick
-    from src.fm_integration import FMEvaluator
-    from src.fm_model import FMInference
-    from src.matchup_db import MatchupDB, skill_ns_to_tier
-    from src.mcts_node import UCB1_C
-    from src.policy_net import PolicyInference, train_policy
-    from src.recommend import _run_mcts
-    from src.rollout import (
-        DEFAULT_MIN_COUNTER_GAMES,
-        DEFAULT_MY_COUNTER_WEIGHT,
-        DEFAULT_OPP_COUNTER_WEIGHT,
-        RolloutWeightCache,
-    )
-    from src.self_play import (
-        DEFAULT_SKILL_NS_CHOICES,
-        DEFAULT_VISIT_DIST_TOP_N,
-        ReplayBuffer,
-        _build_tree_vocab,
-        _sample_pick,
-        _SP_BAN_P,
-        _SP_BAN_TOP_N,
-        _SP_MAX_BANS,
-        _SP_MIN_COUNTER_GAMES,
-        _SP_MIN_PICK_RATE,
-        _SP_OPP_ROLLOUT_MODE,
-        _SP_OPP_TOP_K,
-        load_map_mode_pairs,
-        run_self_play_batch,
-        sample_bans,
-    )
-except ModuleNotFoundError:
-    from draft_state import DraftState, apply_pick
-    from fm_integration import FMEvaluator
-    from fm_model import FMInference
-    from matchup_db import MatchupDB, skill_ns_to_tier
-    from mcts_node import UCB1_C
-    from policy_net import PolicyInference, train_policy
-    from recommend import _run_mcts
-    from rollout import (
-        DEFAULT_MIN_COUNTER_GAMES,
-        DEFAULT_MY_COUNTER_WEIGHT,
-        DEFAULT_OPP_COUNTER_WEIGHT,
-        RolloutWeightCache,
-    )
-    from self_play import (
-        DEFAULT_SKILL_NS_CHOICES,
-        DEFAULT_VISIT_DIST_TOP_N,
-        ReplayBuffer,
-        _build_tree_vocab,
-        _sample_pick,
-        _SP_BAN_P,
-        _SP_BAN_TOP_N,
-        _SP_MAX_BANS,
-        _SP_MIN_COUNTER_GAMES,
-        _SP_MIN_PICK_RATE,
-        _SP_OPP_ROLLOUT_MODE,
-        _SP_OPP_TOP_K,
-        load_map_mode_pairs,
-        run_self_play_batch,
-        sample_bans,
-    )
-
+from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+from bsdraft.fm.model import FMInference
+from bsdraft.mcts.evaluator import FMEvaluator
+from bsdraft.mcts.node import UCB1_C
+from bsdraft.mcts.recommend import _run_mcts
+from bsdraft.mcts.rollout import (
+    DEFAULT_MY_COUNTER_WEIGHT,
+    DEFAULT_OPP_COUNTER_WEIGHT,
+    RolloutWeightCache,
+)
+from bsdraft.mcts.state import DraftState, apply_pick
+from bsdraft.selfplay.generate import (
+    _SP_BAN_P,
+    _SP_BAN_TOP_N,
+    _SP_MAX_BANS,
+    _SP_MIN_COUNTER_GAMES,
+    _SP_MIN_PICK_RATE,
+    _SP_OPP_ROLLOUT_MODE,
+    _SP_OPP_TOP_K,
+    DEFAULT_SKILL_NS_CHOICES,
+    DEFAULT_VISIT_DIST_TOP_N,
+    ReplayBuffer,
+    _build_tree_vocab,
+    _sample_pick,
+    run_self_play_batch,
+    sample_bans,
+)
+from bsdraft.selfplay.policy_net import PolicyInference, train_policy
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -218,7 +182,7 @@ class IterationConfig:
     min_pick_rate: float = _SP_MIN_PICK_RATE
     min_counter_games: int = _SP_MIN_COUNTER_GAMES
     skill_ns_choices: tuple = DEFAULT_SKILL_NS_CHOICES
-    seed: Optional[int] = None
+    seed: int | None = None
     ban_top_n: int = _SP_BAN_TOP_N
     ban_p: float = _SP_BAN_P
     max_bans: int = _SP_MAX_BANS
@@ -295,8 +259,8 @@ def select_eval_maps(
 # ── Head-to-head evaluation game ──────────────────────────────────────────────
 
 def _run_eval_game(
-    new_policy: Optional[PolicyInference],
-    old_policy: Optional[PolicyInference],
+    new_policy: PolicyInference | None,
+    old_policy: PolicyInference | None,
     evaluator: FMEvaluator,
     db: MatchupDB,
     game_idx: int,
@@ -311,7 +275,7 @@ def _run_eval_game(
     ban_top_n: int = _SP_BAN_TOP_N,
     ban_p: float = _SP_BAN_P,
     max_bans: int = _SP_MAX_BANS,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> float:
     """
     Run one evaluation game: new_policy agent vs. old_policy agent.
@@ -429,8 +393,8 @@ def _run_eval_game(
 # ── Policy evaluation ──────────────────────────────────────────────────────────
 
 def evaluate_policies(
-    new_policy: Optional[PolicyInference],
-    old_policy: Optional[PolicyInference],
+    new_policy: PolicyInference | None,
+    old_policy: PolicyInference | None,
     evaluator: FMEvaluator,
     db: MatchupDB,
     eval_map_mode_pairs: list[tuple[str, str]],
@@ -445,7 +409,7 @@ def evaluate_policies(
     ban_top_n: int = _SP_BAN_TOP_N,
     ban_p: float = _SP_BAN_P,
     max_bans: int = _SP_MAX_BANS,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     verbose: bool = True,
 ) -> float:
     """
@@ -533,7 +497,7 @@ def _save_training_log(data_dir: Path, log: list[dict]) -> None:
         json.dump(log, fh, indent=2)
 
 
-def _load_best_policy(data_dir: Path) -> Optional[PolicyInference]:
+def _load_best_policy(data_dir: Path) -> PolicyInference | None:
     """Load the most recently promoted policy (used for self-play data generation)."""
     best_path = _policy_dir(data_dir) / "policy_best.pkl"
     if best_path.exists():
@@ -541,7 +505,7 @@ def _load_best_policy(data_dir: Path) -> Optional[PolicyInference]:
     return None
 
 
-def _load_best_ever_policy(data_dir: Path) -> Optional[PolicyInference]:
+def _load_best_ever_policy(data_dir: Path) -> PolicyInference | None:
     """
     Load the all-time best promoted policy (used as the promotion eval opponent).
 
@@ -584,8 +548,8 @@ def _save_policy(
 def run_iteration(
     iteration_num: int,
     replay_buffer: ReplayBuffer,
-    current_policy: Optional[PolicyInference],
-    best_ever_policy: Optional[PolicyInference],
+    current_policy: PolicyInference | None,
+    best_ever_policy: PolicyInference | None,
     evaluator: FMEvaluator,
     db: MatchupDB,
     map_mode_pairs: list[tuple[str, str]],
@@ -693,7 +657,6 @@ def run_iteration(
 
     # Extract final train / val KL from history
     final_train_kl = loss_hist[-1][1] if loss_hist else float("nan")
-    final_val_kl   = loss_hist[-1][2] if loss_hist else float("nan")
     best_val_kl    = min((e[2] for e in loss_hist), default=float("nan"))
     print(
         f"     done in {train_elapsed:.1f}s  "
@@ -774,10 +737,10 @@ def run_iteration_loop(
     n_iterations: int,
     data_dir: Path,
     map_mode_pairs: list[tuple[str, str]],
-    config: Optional[IterationConfig] = None,
+    config: IterationConfig | None = None,
     *,
-    evaluator: Optional[FMEvaluator] = None,
-    db: Optional[MatchupDB] = None,
+    evaluator: FMEvaluator | None = None,
+    db: MatchupDB | None = None,
     resume: bool = True,
     verbose: bool = True,
 ) -> list[IterationResult]:
@@ -833,10 +796,10 @@ def run_iteration_loop(
     # Load existing training log and current best policy if resuming.
     existing_log = _load_training_log(data_dir) if resume else []
     start_iteration = len(existing_log)
-    current_policy: Optional[PolicyInference] = (
+    current_policy: PolicyInference | None = (
         _load_best_policy(data_dir) if resume else None
     )
-    best_ever_policy: Optional[PolicyInference] = (
+    best_ever_policy: PolicyInference | None = (
         _load_best_ever_policy(data_dir) if resume else None
     )
     if verbose and current_policy is not None:

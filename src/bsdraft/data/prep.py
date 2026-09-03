@@ -23,7 +23,8 @@ import pandas as pd
 # Paths & constants
 # ---------------------------------------------------------------------------
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# src/bsdraft/<subpackage>/<module>.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DB_PATH = REPO_ROOT / "season42" / "season42_combined_skill_ns.db"
 
 ELO_MIN = 13

@@ -81,19 +81,11 @@ a leaf — they do not change tree selection.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from typing import Optional
-
 import numpy as np
 
-_SRC = str(Path(__file__).resolve().parent)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-
-from draft_state import DraftState, available_actions, apply_pick  # noqa: E402
-from fm_integration import FMEvaluator                              # noqa: E402
-from matchup_db import MatchupDB, skill_ns_to_tier                  # noqa: E402
+from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+from bsdraft.mcts.evaluator import FMEvaluator
+from bsdraft.mcts.state import DraftState, apply_pick, available_actions
 
 # Default rollout parameters.
 DEFAULT_MY_COUNTER_WEIGHT: float = 0.3
@@ -453,8 +445,8 @@ def rollout(
     my_rollout_mode: str = DEFAULT_ROLLOUT_MODE,
     my_top_k: int = DEFAULT_TOP_K,
     min_counter_games: int = DEFAULT_MIN_COUNTER_GAMES,
-    rng: Optional[np.random.Generator] = None,
-    weight_cache: Optional["RolloutWeightCache"] = None,
+    rng: np.random.Generator | None = None,
+    weight_cache: RolloutWeightCache | None = None,
 ) -> float:
     """
     Complete the draft from `state` to terminal via stochastic rollout,

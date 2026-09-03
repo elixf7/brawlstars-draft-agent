@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 # ── Pipeline status ───────────────────────────────────────────────────────────
 
 def check_pipeline_status(data_dir: Path) -> dict:
@@ -140,17 +139,15 @@ def benchmark_mcts_speed(
 
     # Lazy imports — avoids loading torch at workflow_utils import time.
     try:
-        from fm_model import FMInference
-        from fm_integration import FMEvaluator
-        from matchup_db import MatchupDB
-        from self_play import run_self_play_batch
+        from bsdraft.data.matchup_db import MatchupDB
+        from bsdraft.fm.model import FMInference
+        from bsdraft.mcts.evaluator import FMEvaluator
+        from bsdraft.selfplay.generate import run_self_play_batch
     except ModuleNotFoundError:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from fm_model import FMInference
-        from fm_integration import FMEvaluator
-        from matchup_db import MatchupDB
-        from self_play import run_self_play_batch
+        from bsdraft.data.matchup_db import MatchupDB
+        from bsdraft.fm.model import FMInference
+        from bsdraft.mcts.evaluator import FMEvaluator
+        from bsdraft.selfplay.generate import run_self_play_batch
 
     if sim_counts is None:
         sim_counts = [500, 1000, 2000, 5000]
@@ -269,45 +266,43 @@ def run_eval_games(
       'elapsed_sec'      : float
     """
     import time
+
     import numpy as np
 
     # Lazy imports — avoid loading torch/numpy at module import time.
     try:
-        from fm_model import FMInference
-        from fm_integration import FMEvaluator
-        from matchup_db import MatchupDB, skill_ns_to_tier
-        from draft_state import DraftState, apply_pick
-        from recommend import _run_mcts
-        from rollout import (
-            RolloutWeightCache,
+        from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+        from bsdraft.fm.model import FMInference
+        from bsdraft.mcts.evaluator import FMEvaluator
+        from bsdraft.mcts.node import UCB1_C
+        from bsdraft.mcts.recommend import _run_mcts
+        from bsdraft.mcts.rollout import (
             DEFAULT_MY_COUNTER_WEIGHT,
             DEFAULT_OPP_COUNTER_WEIGHT,
+            RolloutWeightCache,
         )
-        from mcts_node import UCB1_C
-        from self_play import (
+        from bsdraft.mcts.state import DraftState, apply_pick
+        from bsdraft.selfplay.generate import (
+            DEFAULT_SKILL_NS_CHOICES,
             _build_tree_vocab,
             _sample_pick,
-            DEFAULT_SKILL_NS_CHOICES,
             load_map_mode_pairs,
         )
     except ModuleNotFoundError:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from fm_model import FMInference
-        from fm_integration import FMEvaluator
-        from matchup_db import MatchupDB, skill_ns_to_tier
-        from draft_state import DraftState, apply_pick
-        from recommend import _run_mcts
-        from rollout import (
-            RolloutWeightCache,
+        from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+        from bsdraft.fm.model import FMInference
+        from bsdraft.mcts.evaluator import FMEvaluator
+        from bsdraft.mcts.recommend import _run_mcts
+        from bsdraft.mcts.rollout import (
             DEFAULT_MY_COUNTER_WEIGHT,
             DEFAULT_OPP_COUNTER_WEIGHT,
+            RolloutWeightCache,
         )
-        from mcts_node import UCB1_C
-        from self_play import (
+        from bsdraft.mcts.state import DraftState, apply_pick
+        from bsdraft.selfplay.generate import (
+            DEFAULT_SKILL_NS_CHOICES,
             _build_tree_vocab,
             _sample_pick,
-            DEFAULT_SKILL_NS_CHOICES,
             load_map_mode_pairs,
         )
 
@@ -436,8 +431,6 @@ def validate_joint_net(
     try:
         import numpy as np
     except ModuleNotFoundError:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
         import numpy as np
 
     # Replicate train_joint's chronological val split
@@ -454,7 +447,7 @@ def validate_joint_net(
     bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
     bin_mads  = []
 
-    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:], strict=True):
         mask = (pred_probs >= lo) & (pred_probs < hi)
         if mask.sum() == 0:
             continue
@@ -536,47 +529,43 @@ def benchmark_rollout_free_speed(
         ``n_sims``, ``fm_sec_per_pick``, ``joint_sec_per_pick``, ``speedup``.
         ``joint_sec_per_pick`` and ``speedup`` are None when joint_net.pkl is absent.
     """
-    import time
     import statistics
+    import time
 
     try:
-        from fm_model      import FMInference
-        from fm_integration import FMEvaluator
-        from matchup_db    import MatchupDB, skill_ns_to_tier
-        from draft_state   import DraftState
-        from recommend     import _run_mcts
-        from rollout       import (
-            RolloutWeightCache,
+        from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+        from bsdraft.fm.model import FMInference
+        from bsdraft.mcts.evaluator import FMEvaluator
+        from bsdraft.mcts.recommend import _run_mcts
+        from bsdraft.mcts.rollout import (
             DEFAULT_MY_COUNTER_WEIGHT,
             DEFAULT_OPP_COUNTER_WEIGHT,
+            RolloutWeightCache,
         )
-        from mcts_node     import UCB1_C
-        from self_play     import (
-            _build_tree_vocab,
+        from bsdraft.mcts.state import DraftState
+        from bsdraft.selfplay.generate import (
             DEFAULT_SKILL_NS_CHOICES,
+            _build_tree_vocab,
             load_map_mode_pairs,
         )
-        from joint_net     import JointNetInference
+        from bsdraft.selfplay.joint_net import JointNetInference
     except ModuleNotFoundError:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from fm_model      import FMInference
-        from fm_integration import FMEvaluator
-        from matchup_db    import MatchupDB, skill_ns_to_tier
-        from draft_state   import DraftState
-        from recommend     import _run_mcts
-        from rollout       import (
-            RolloutWeightCache,
+        from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+        from bsdraft.fm.model import FMInference
+        from bsdraft.mcts.evaluator import FMEvaluator
+        from bsdraft.mcts.recommend import _run_mcts
+        from bsdraft.mcts.rollout import (
             DEFAULT_MY_COUNTER_WEIGHT,
             DEFAULT_OPP_COUNTER_WEIGHT,
+            RolloutWeightCache,
         )
-        from mcts_node     import UCB1_C
-        from self_play     import (
-            _build_tree_vocab,
+        from bsdraft.mcts.state import DraftState
+        from bsdraft.selfplay.generate import (
             DEFAULT_SKILL_NS_CHOICES,
+            _build_tree_vocab,
             load_map_mode_pairs,
         )
-        from joint_net     import JointNetInference
+        from bsdraft.selfplay.joint_net import JointNetInference
 
     import numpy as np
 
@@ -638,9 +627,9 @@ def benchmark_rollout_free_speed(
     # ── Print header ───────────────────────────────────────────────────────────
     w = 68 if has_joint else 46
     print(f"Rollout-Free Speed Benchmark  —  {map_name} / {mode}")
-    print(f"  FM-only  : rollout simulations (baseline)")
+    print("  FM-only  : rollout simulations (baseline)")
     if has_joint:
-        print(f"  Joint net: value head replaces rollouts (rollout-free)")
+        print("  Joint net: value head replaces rollouts (rollout-free)")
     print(f"  Timing   : {n_warmup} warm-up + {n_timed} timed calls, median reported")
     print("─" * w)
     hdr = f"  {'sims/pick':>9}  {'FM sec/pick':>11}  {'FM picks/min':>12}"

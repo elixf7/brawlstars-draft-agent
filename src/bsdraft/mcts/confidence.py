@@ -60,20 +60,11 @@ Ban calibration utility
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from typing import Optional
-
 import numpy as np
 
-_SRC = str(Path(__file__).resolve().parent)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-
-from draft_state import DraftState                      # noqa: E402
-from matchup_db import MatchupDB, skill_ns_to_tier      # noqa: E402
-from mcts_node import MCTSNode                          # noqa: E402
-
+from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+from bsdraft.mcts.node import MCTSNode
+from bsdraft.mcts.state import DraftState
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 
@@ -292,7 +283,7 @@ def sample_random_bans(
     mode: str = "",
     map_name: str = "",
     tier: int = 1,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> frozenset[str]:
     """
     Sample a realistic ban set for calibration and stress-testing.
@@ -401,9 +392,9 @@ def format_layer2(result: dict) -> str:
 # ── Sanity checks (run: python src/confidence.py) ────────────────────────────
 
 if __name__ == "__main__":
-    from fm_integration import FMEvaluator
-    from mcts_node import backpropagate, select
-    from rollout import rollout
+    from bsdraft.mcts.evaluator import FMEvaluator
+    from bsdraft.mcts.node import backpropagate, select
+    from bsdraft.mcts.rollout import rollout
 
     print("=== Step 2.6 Sanity Checks ===\n")
 
@@ -424,7 +415,7 @@ if __name__ == "__main__":
     r1 = layer1_confidence(empty_state, db)
     assert r1["harmonic_n"] is None
     assert r1["confidence_label"] == "N/A"
-    print(f"Check 1: Layer 1 at draft start")
+    print("Check 1: Layer 1 at draft start")
     print(f"  {format_layer1(r1)}  ✓\n")
 
     # ── Check 2: Layer 1 — terminal state ────────────────────────────────────
@@ -439,7 +430,7 @@ if __name__ == "__main__":
     assert r2["confidence_label"] in {"High", "Medium", "Low"}
     print(f"Check 2: Layer 1 at terminal state ({r2['n_pairs']} cross-team pairs)")
     print(f"  {format_layer1(r2)}")
-    print(f"  Per-pair breakdown:")
+    print("  Per-pair breakdown:")
     for p in r2["pairs"]:
         wr = f"{p['win_rate']:.3f}" if p["win_rate"] is not None else " N/A"
         print(
@@ -456,7 +447,7 @@ if __name__ == "__main__":
     )
     r3_l1 = layer1_confidence(partial, db)
     assert r3_l1["n_pairs"] == 1
-    print(f"Check 3: Layer 1 at partial state (1 pick each)")
+    print("Check 3: Layer 1 at partial state (1 pick each)")
     print(f"  {format_layer1(r3_l1)}  ✓\n")
 
     # ── Check 4: Layer 2 — run MCTS and check top-5 structure ────────────────
@@ -510,7 +501,7 @@ if __name__ == "__main__":
 
     frac_50  = r_50["top_picks"][0]["visit_fraction"]
     frac_500 = r_500["top_picks"][0]["visit_fraction"]
-    print(f"Check 5: top-pick visit fraction comparison")
+    print("Check 5: top-pick visit fraction comparison")
     print(f"  50 sims:  {frac_50:.3f}  ({r_50['confidence_label']})")
     print(f"  500 sims: {frac_500:.3f}  ({r_500['confidence_label']})")
     # Not guaranteed to increase if no dominant pick exists — log either way.
@@ -525,7 +516,7 @@ if __name__ == "__main__":
     assert len(bans) == 6
     assert all(b in set(vocab) for b in bans)
     print(f"Check 6: sample_random_bans(n=6) → {sorted(bans)}")
-    print(f"  6 unique brawlers from vocab  ✓\n")
+    print("  6 unique brawlers from vocab  ✓\n")
 
     # ── Check 7: bans are respected in draft state + MCTS runs cleanly ────────
     banned_state = DraftState(

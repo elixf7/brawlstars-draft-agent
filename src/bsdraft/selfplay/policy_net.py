@@ -31,27 +31,18 @@ Integration
 from __future__ import annotations
 
 import pickle
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-_SRC = str(Path(__file__).resolve().parent)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+from bsdraft.features.engineering import FeatureSchema
+from bsdraft.mcts.state import DraftState
 
-try:
-    from src.draft_state import DraftState, available_actions
-    from src.feature_engineering import FeatureSchema
-except ModuleNotFoundError:
-    from draft_state import DraftState, available_actions
-    from feature_engineering import FeatureSchema
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# src/bsdraft/<subpackage>/<module>.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data"
 POLICY_NET_PATH = DATA_DIR / "policy_net.pkl"
 
@@ -267,7 +258,7 @@ class PolicyInference:
         print(f"PolicyInference saved → {path}")
 
     @classmethod
-    def load(cls, path: Path = POLICY_NET_PATH) -> "PolicyInference":
+    def load(cls, path: Path = POLICY_NET_PATH) -> PolicyInference:
         import importlib
 
         class _Unpickler(pickle.Unpickler):
@@ -367,9 +358,9 @@ def train_policy(
     max_epochs: int = _MAX_EPOCHS,
     patience: int = _PATIENCE,
     val_game_fraction: float = _VAL_GAME_FRACTION,
-    device: Optional[str] = None,
+    device: str | None = None,
     verbose: bool = True,
-    loss_history: Optional[list] = None,
+    loss_history: list | None = None,
 ) -> PolicyInference:
     """
     Train a PolicyNet on self-play records and return a PolicyInference wrapper.
@@ -479,7 +470,7 @@ def train_policy(
 
     best_val = float("inf")
     patience_count = 0
-    best_weights: Optional[dict] = None
+    best_weights: dict | None = None
 
     for epoch in range(max_epochs):
         net.train()

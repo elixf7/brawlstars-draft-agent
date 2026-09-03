@@ -7,7 +7,7 @@ estimates, and both confidence layers.
 
 Usage
 -----
-    from recommend import recommend
+    from bsdraft.mcts.recommend import recommend
 
     result = recommend(
         my_picks      = ["MORTIS"],
@@ -46,35 +46,28 @@ pre-loaded evaluator and db to avoid reloading from disk each call:
 
 from __future__ import annotations
 
-import sys
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, Optional
 
 import numpy as np
 
-_SRC = str(Path(__file__).resolve().parent)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-
-from confidence import (            # noqa: E402
+from bsdraft.data.matchup_db import MatchupDB, skill_ns_to_tier
+from bsdraft.mcts.confidence import (
     format_layer1,
     format_layer2,
     layer1_confidence,
     layer2_confidence,
 )
-from draft_state import DraftState, available_actions  # noqa: E402
-from fm_integration import FMEvaluator  # noqa: E402
-from matchup_db import MatchupDB, skill_ns_to_tier  # noqa: E402
-from mcts_node import (             # noqa: E402
-    MCTSNode,
+from bsdraft.mcts.evaluator import FMEvaluator
+from bsdraft.mcts.node import (
     UCB1_C,
+    MCTSNode,
     backpropagate,
     select,
     select_child,
 )
-from rollout import (               # noqa: E402
+from bsdraft.mcts.rollout import (
     DEFAULT_MIN_COUNTER_GAMES,
     DEFAULT_MIN_PICK_RATE,
     DEFAULT_MY_COUNTER_WEIGHT,
@@ -84,14 +77,9 @@ from rollout import (               # noqa: E402
     RolloutWeightCache,
     rollout,
 )
-
-try:
-    from src.policy_net import PolicyInference
-    from src.joint_net import JointNetInference
-except ModuleNotFoundError:
-    from policy_net import PolicyInference   # noqa: E402
-    from joint_net import JointNetInference  # noqa: E402
-
+from bsdraft.mcts.state import DraftState, available_actions
+from bsdraft.selfplay.joint_net import JointNetInference
+from bsdraft.selfplay.policy_net import PolicyInference
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
 
@@ -164,12 +152,12 @@ class RecommendResult:
 def _compute_puct_priors(
     state: DraftState,
     expand_vocab: tuple[str, ...],
-    weight_cache: "RolloutWeightCache",
+    weight_cache: RolloutWeightCache,
     puct_alpha: float,
     min_pick_rate: float,
     tier: int,
-    policy: Optional["PolicyInference"] = None,
-) -> Optional[np.ndarray]:
+    policy: PolicyInference | None = None,
+) -> np.ndarray | None:
     """
     Compute normalized prior weights for an opponent-turn node expansion (Step 3.2.1).
 
@@ -219,10 +207,10 @@ def _run_mcts(
     c: float,
     rng: np.random.Generator,
     puct_alpha: float = 0.7,
-    tree_vocab: Optional[tuple[str, ...]] = None,
-    weight_cache: Optional["RolloutWeightCache"] = None,
-    policy: Optional["PolicyInference"] = None,
-    value_net: Optional["JointNetInference"] = None,
+    tree_vocab: tuple[str, ...] | None = None,
+    weight_cache: RolloutWeightCache | None = None,
+    policy: PolicyInference | None = None,
+    value_net: JointNetInference | None = None,
 ) -> MCTSNode:
     """
     Run `n_simulations` MCTS iterations from `state` and return the root node.
@@ -277,7 +265,7 @@ def _run_mcts(
 
     def _expand_node(node: MCTSNode) -> None:
         """Expand node, attaching PUCT priors at opponent-turn nodes."""
-        pw: Optional[np.ndarray] = None
+        pw: np.ndarray | None = None
         if node.state.whose_turn == "opp" and (policy is not None or puct_alpha > 0.0):
             pw = _compute_puct_priors(
                 node.state, _expand_vocab, weight_cache, puct_alpha, min_pick_rate, _tier,
@@ -354,11 +342,11 @@ def recommend(
     min_counter_games: int = DEFAULT_MIN_COUNTER_GAMES,
     ucb1_c: float = UCB1_C,
     puct_alpha: float = 0.7,
-    evaluator: Optional[FMEvaluator] = None,
-    db: Optional[MatchupDB] = None,
-    rng: Optional[np.random.Generator] = None,
-    policy: Optional["PolicyInference"] = None,
-    value_net: Optional["JointNetInference"] = None,
+    evaluator: FMEvaluator | None = None,
+    db: MatchupDB | None = None,
+    rng: np.random.Generator | None = None,
+    policy: PolicyInference | None = None,
+    value_net: JointNetInference | None = None,
 ) -> RecommendResult:
     """
     Run MCTS from the given partial draft state and return pick recommendations.
@@ -481,7 +469,7 @@ def recommend(
             entry = db.brawler_lookup(b, mode, map_name, tier)
             if entry is None or entry["pick_rate"] >= min_pick_rate:
                 _filtered.append(b)
-        tree_vocab: Optional[tuple[str, ...]] = tuple(_filtered)
+        tree_vocab: tuple[str, ...] | None = tuple(_filtered)
     else:
         tree_vocab = None  # signals _run_mcts to use full vocab
 
@@ -695,7 +683,7 @@ if __name__ == "__main__":
             is_first_pick=True,
             evaluator=evaluator, db=db,
         )
-        assert False, "Expected ValueError"
+        raise AssertionError("Expected ValueError")
     except ValueError as e:
         print(f"  Caught ValueError: {e}")
     print("  ✓\n")

@@ -33,18 +33,9 @@ Note on tree reuse across picks:
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-import numpy as np
-
-_SRC = str(Path(__file__).resolve().parent)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-
-from draft_state import DraftState       # noqa: E402
-from fm_evaluate import FMEncoder        # noqa: E402
-from fm_model import FMInference         # noqa: E402
+from bsdraft.fm.evaluate import FMEncoder
+from bsdraft.fm.model import FMInference
+from bsdraft.mcts.state import DraftState
 
 
 class FMEvaluator:
@@ -154,7 +145,7 @@ class FMEvaluator:
     # ── Construction helpers ──────────────────────────────────────────────────
 
     @classmethod
-    def load(cls) -> "FMEvaluator":
+    def load(cls) -> FMEvaluator:
         """Load the trained FM from data/fm_model.pkl and return a ready evaluator."""
         fm = FMInference.load()
         return cls(fm)
@@ -214,7 +205,7 @@ if __name__ == "__main__":
     _ = evaluator.evaluate(state)           # second call — must be a cache hit
     stats_after = evaluator.cache_stats
     assert stats_after["hits"] == stats_before["hits"] + 1, "Expected a cache hit on second call"
-    print(f"Check 3: cache hit on second call")
+    print("Check 3: cache hit on second call")
     print(f"  hits={stats_after['hits']}, misses={stats_after['misses']}, "
           f"hit_rate={stats_after['hit_rate']:.2f}  ✓\n")
 
@@ -230,7 +221,7 @@ if __name__ == "__main__":
     assert not partial.is_terminal
     try:
         evaluator.evaluate(partial)
-        assert False, "Expected ValueError for non-terminal state"
+        raise AssertionError("Expected ValueError for non-terminal state")
     except ValueError as e:
         print(f"Check 4: evaluate() on partial state raises ValueError: {e}")
         print("  ✓\n")

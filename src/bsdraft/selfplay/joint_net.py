@@ -44,49 +44,34 @@ Training
 from __future__ import annotations
 
 import pickle
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-_SRC = str(Path(__file__).resolve().parent)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-
-try:
-    from src.draft_state import DraftState
-    from src.feature_engineering import FeatureSchema
-    from src.policy_net import (
-        POLICY_EXTRA_FEATURES,
-        _picker_pov,
-        encode_partial_state,
-        _make_batches,
-    )
-except ModuleNotFoundError:
-    from draft_state import DraftState
-    from feature_engineering import FeatureSchema
-    from policy_net import (
-        POLICY_EXTRA_FEATURES,
-        _picker_pov,
-        encode_partial_state,
-        _make_batches,
-    )
+from bsdraft.features.engineering import FeatureSchema
+from bsdraft.mcts.state import DraftState
+from bsdraft.selfplay.policy_net import (
+    POLICY_EXTRA_FEATURES,
+    _make_batches,
+    _picker_pov,
+    encode_partial_state,
+)
 
 # augment_with_team_swap is imported lazily inside train_joint() to break the
 # circular import chain: joint_net → self_play → joint_net.
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# src/bsdraft/<subpackage>/<module>.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 JOINT_NET_PATH = REPO_ROOT / "data" / "joint_net.pkl"
 
 
 # ── Terminal-state encoding helper ────────────────────────────────────────────
 
-def _encode_terminal_for_value(state: DraftState, schema: "FeatureSchema") -> np.ndarray:
+def _encode_terminal_for_value(state: DraftState, schema: FeatureSchema) -> np.ndarray:
     """
     Encode a terminal DraftState for value head inference.
 
@@ -290,7 +275,7 @@ class JointNetInference:
         print(f"JointNetInference saved → {path}")
 
     @classmethod
-    def load(cls, path: Path = JOINT_NET_PATH) -> "JointNetInference":
+    def load(cls, path: Path = JOINT_NET_PATH) -> JointNetInference:
         import importlib
 
         class _Unpickler(pickle.Unpickler):
@@ -415,10 +400,10 @@ def train_joint(
     max_epochs: int = _MAX_EPOCHS,
     patience: int = _PATIENCE,
     val_game_fraction: float = _VAL_GAME_FRACTION,
-    trunk_hidden: Optional[tuple[int, ...]] = None,
-    device: Optional[str] = None,
+    trunk_hidden: tuple[int, ...] | None = None,
+    device: str | None = None,
     verbose: bool = True,
-    loss_history: Optional[list] = None,
+    loss_history: list | None = None,
 ) -> JointNetInference:
     """
     Train a JointNet on self-play records and return a JointNetInference wrapper.
@@ -455,9 +440,9 @@ def train_joint(
 
     # Lazy import to avoid circular dependency (self_play imports joint_net).
     try:
-        from src.self_play import augment_with_team_swap
+        from bsdraft.selfplay.generate import augment_with_team_swap
     except ModuleNotFoundError:
-        from self_play import augment_with_team_swap
+        from bsdraft.selfplay.generate import augment_with_team_swap
 
     if device is None:
         if torch.cuda.is_available():
@@ -532,7 +517,7 @@ def train_joint(
     # ── Training loop ─────────────────────────────────────────────────────────
     best_val = float("inf")
     patience_count = 0
-    best_weights: Optional[dict] = None
+    best_weights: dict | None = None
 
     idx_all = np.arange(len(train_all), dtype=np.intp)
 

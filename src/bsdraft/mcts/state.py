@@ -172,7 +172,7 @@ if __name__ == "__main__":
             state = apply_pick(state, brawler)
             print(f"  pick {i}: {expected:4s}  → picks {brawler}")
         assert state.is_terminal, "Expected terminal after 6 picks"
-        print(f"  is_terminal = True  ✓\n")
+        print("  is_terminal = True  ✓\n")
 
     # ── Check 2: available_actions respects picks and bans ────────────────────
     state = DraftState(
@@ -201,7 +201,7 @@ if __name__ == "__main__":
     assert terminal.is_terminal
     try:
         _ = terminal.whose_turn
-        assert False, "Expected ValueError"
+        raise AssertionError("Expected ValueError")
     except ValueError:
         print("whose_turn on terminal raises ValueError  ✓\n")
 

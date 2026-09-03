@@ -32,12 +32,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-try:
-    from src.data_prep import DB_PATH, TEAM1_BRAWLER_COLS, TEAM2_BRAWLER_COLS, build_game_dataset
-except ModuleNotFoundError:
-    from data_prep import DB_PATH, TEAM1_BRAWLER_COLS, TEAM2_BRAWLER_COLS, build_game_dataset
+from bsdraft.data.prep import DB_PATH, TEAM1_BRAWLER_COLS, TEAM2_BRAWLER_COLS, build_game_dataset
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# src/bsdraft/<subpackage>/<module>.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SAVE_PATH = REPO_ROOT / "data" / "matchup_db.pkl"
 
 N_SKILL_TIERS = 4  # quartile tiers: 0 (casual) … 3 (elite)
@@ -446,7 +444,7 @@ class MatchupDB:
         elo_max: int | None = None,
     ) -> "MatchupDB":
         """Build all three tables from scratch. Runs the full 1.2 pipeline."""
-        from data_prep import ELO_MIN as _EMIN, ELO_MAX as _EMAX  # noqa: E402
+        from bsdraft.data.prep import ELO_MIN as _EMIN, ELO_MAX as _EMAX
 
         df, _ = build_game_dataset(
             db_path,
@@ -472,7 +470,7 @@ class MatchupDB:
 if __name__ == "__main__":
     import argparse
     import sys
-    from data_prep import SEASON_CONFIGS  # noqa: E402
+    from bsdraft.data.prep import SEASON_CONFIGS
 
     parser = argparse.ArgumentParser(description="Build MatchupDB for a given season.")
     parser.add_argument(

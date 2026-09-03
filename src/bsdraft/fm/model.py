@@ -26,7 +26,7 @@ Usage:
   python src/fm_model.py
 
   # Load for MCTS inference:
-  from src.fm_model import FMInference
+  from bsdraft.fm.model import FMInference
   inf = FMInference.load()
   prob = inf.evaluate_sparse(indices, values)  # indices/values for 9 non-zero features
 """
@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import math
 import pickle
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,19 +45,16 @@ import torch.nn as nn
 from scipy.sparse import csr_matrix
 from sklearn.metrics import roc_auc_score
 
-_SRC_DIR = str(Path(__file__).resolve().parent)
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
-
-from feature_engineering import (  # noqa: E402
+from bsdraft.data.prep import build_game_dataset
+from bsdraft.features.engineering import (
+    SCHEMA_PATH,
     FeatureSchema,
     build_feature_matrix,
     chronological_split,
-    SCHEMA_PATH,
 )
-from data_prep import build_game_dataset  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# src/bsdraft/<subpackage>/<module>.py -> repository root
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = REPO_ROOT / "data"
 MODEL_PATH = DATA_DIR / "fm_model.pkl"
 
@@ -153,7 +149,7 @@ class FMInference:
         n_val: int = 0,
         split_time: str = "",
         train_history: list | None = None,
-    ) -> "FMInference":
+    ) -> FMInference:
         with torch.no_grad():
             return cls(
                 w0=model.w0.item(),
@@ -226,7 +222,7 @@ class FMInference:
         print(f"FM inference model saved → {path}")
 
     @staticmethod
-    def load(path: Path = MODEL_PATH) -> "FMInference":
+    def load(path: Path = MODEL_PATH) -> FMInference:
         import importlib
 
         class _Unpickler(pickle.Unpickler):
@@ -360,7 +356,9 @@ def train_fm(
     print(f"Device: {device}")
 
     # ── Data ──────────────────────────────────────────────────────────────────
-    from data_prep import DB_PATH as _DEFAULT_DB, ELO_MIN as _EMIN, ELO_MAX as _EMAX  # noqa: E402
+    from bsdraft.data.prep import DB_PATH as _DEFAULT_DB
+    from bsdraft.data.prep import ELO_MAX as _EMAX
+    from bsdraft.data.prep import ELO_MIN as _EMIN
 
     print("\nLoading dataset...")
     df, _ = build_game_dataset(
@@ -374,7 +372,7 @@ def train_fm(
     if schema_path.exists():
         schema = FeatureSchema.load(schema_path)
     else:
-        from feature_engineering import build_schema  # noqa: E402
+        from bsdraft.features.engineering import build_schema
         print("feature_schema.pkl not found — building schema from dataset...")
         schema = build_schema(df)
         schema.save(schema_path)
@@ -475,7 +473,7 @@ def train_fm(
         model.load_state_dict(best_state)
 
     final = _eval_metrics(model, val_idx, val_val, y_val, device)
-    print(f"\n── Final validation metrics ─────────────────────────────")
+    print("\n── Final validation metrics ─────────────────────────────")
     print(f"  Log-loss : {final['logloss']:.4f}  (random baseline ≈ 0.693)")
     print(f"  AUC-ROC  : {final['auc']:.4f}  (random baseline = 0.500)")
     print(f"  Brier    : {final['brier']:.4f}  (random baseline = 0.250)")
@@ -503,7 +501,8 @@ def train_fm(
 
 if __name__ == "__main__":
     import argparse
-    from data_prep import SEASON_CONFIGS  # noqa: E402
+
+    from bsdraft.data.prep import SEASON_CONFIGS
 
     parser = argparse.ArgumentParser(description="Train FM for a given season.")
     parser.add_argument(

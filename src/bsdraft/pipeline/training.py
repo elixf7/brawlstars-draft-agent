@@ -11,10 +11,8 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
-
 
 # ── Status checking ────────────────────────────────────────────────────────────
 
@@ -73,7 +71,8 @@ def check_status(data_dir: Path) -> dict:
 
 def print_status(status: dict) -> None:
     """Pretty-print the dict returned by check_status()."""
-    ok = lambda v: "✓" if v else "✗"
+    def ok(v):
+        return "✓" if v else "✗"
     print("=" * 50)
     print("  Training Status")
     print("=" * 50)
@@ -115,10 +114,7 @@ def benchmark_joint_net(joint, n_calls: int = 5_000) -> float:
 
     Uses a representative partial state (pick_number=3, both teams have 1 brawler).
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    from policy_net import encode_partial_state
-    from draft_state import DraftState
+    from bsdraft.mcts.state import DraftState
 
     state = DraftState(
         my_team=frozenset({"BULL"}),
@@ -157,9 +153,7 @@ def benchmark_self_play_serial(
       games_per_hr  : float  (serial)
       sims_per_sec  : float  (total MCTS simulations per second)
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    from self_play import run_self_play_game
+    from bsdraft.selfplay.generate import run_self_play_game
 
     rng = np.random.default_rng(0)
     t0 = time.perf_counter()
@@ -191,7 +185,7 @@ def print_speed_report(
     fm_eps: float,
     serial_stats: dict,
     n_workers: int,
-    joint_eps: Optional[float] = None,
+    joint_eps: float | None = None,
 ) -> None:
     """Print a formatted speed report."""
     n_cpu = os.cpu_count() or 4
@@ -204,12 +198,12 @@ def print_speed_report(
     if joint_eps is not None:
         print(f"  Joint net evals/sec (value): {joint_eps:>10,.0f}")
     print()
-    print(f"  Self-play (serial, 1 worker):")
+    print("  Self-play (serial, 1 worker):")
     print(f"    {serial_stats['sec_per_game']:.1f}s / game  "
           f"→  {serial_stats['games_per_hr']:.0f} games/hr  "
           f"  ({serial_stats['sims_per_sec']:,.0f} sims/sec)")
     print()
-    print(f"  Estimated parallel speed (multiprocessing):")
+    print("  Estimated parallel speed (multiprocessing):")
     for nw in [2, 4, 8]:
         if nw <= n_cpu:
             gph = serial_stats["games_per_hr"] * nw * eff
@@ -236,7 +230,7 @@ def run_joint_iteration(
     lambda_v: float = 1.0,
     lr: float = 1e-3,
     max_epochs: int = 50,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     verbose: bool = True,
 ) -> tuple:
     """
@@ -255,10 +249,8 @@ def run_joint_iteration(
     n_total_games : int              (total games now in buffer)
     loss_history  : list             ([(epoch, pol_train, val_train, val_comb), ...])
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    from self_play import run_self_play_batch, ReplayBuffer
-    from joint_net import train_joint, JointNetInference
+    from bsdraft.selfplay.generate import ReplayBuffer, run_self_play_batch
+    from bsdraft.selfplay.joint_net import train_joint
 
     data_dir = Path(data_dir)
     buf = ReplayBuffer.load(data_dir / "self_play")
@@ -338,7 +330,7 @@ def plot_training_log(training_log: list, ax=None) -> None:
     ax.axhline(0.525, color="crimson", linestyle="--", lw=1, label="Promotion threshold (0.525)")
     ax.axhline(0.5, color="gray", linestyle=":", lw=1, label="Baseline (0.5)")
 
-    for i, wp, pr in zip(iters, win_probs, promoted):
+    for i, wp, pr in zip(iters, win_probs, promoted, strict=True):
         if pr:
             ax.annotate("promoted", (i, wp), textcoords="offset points",
                         xytext=(4, 4), fontsize=7, color="forestgreen")
@@ -368,13 +360,17 @@ def plot_joint_loss(loss_history: list, ax1=None, ax2=None) -> None:
 
     ax1.plot(epochs, pol_train, color="steelblue", label="Policy (train)")
     ax1.set_title("Policy head — cross-entropy")
-    ax1.set_xlabel("Epoch"); ax1.set_ylabel("Loss"); ax1.legend()
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Loss")
+    ax1.legend()
 
     ax2.plot(epochs, val_train, color="darkorange", label="Value (train)")
     ax2.plot(epochs, val_comb,  color="gray", linestyle="--", label="Combined (val)")
     ax2.axhline(0.693, color="crimson", linestyle=":", lw=1, label="Random baseline")
     ax2.set_title("Value head — BCE")
-    ax2.set_xlabel("Epoch"); ax2.set_ylabel("Loss"); ax2.legend()
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Loss")
+    ax2.legend()
 
 
 # ── Recommendation quality spot-check ─────────────────────────────────────────
@@ -398,10 +394,8 @@ def spot_check_recommendations(
     Returns a list of dicts with keys:
       state, top1, visit_frac, rollout_fm_mean
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent))
-    from recommend import recommend
-    from draft_state import apply_pick, available_actions
+    from bsdraft.mcts.recommend import recommend
+    from bsdraft.mcts.state import apply_pick, available_actions
 
     if rng is None:
         rng = np.random.default_rng(0)
