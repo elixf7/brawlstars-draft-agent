@@ -1,0 +1,18 @@
+# A full-season run: everything above elo 10, the whole published season.
+name = "season53"
+seed = 20260903
+output_dir = "runs"
+
+[data]
+season  = "season53"
+repo_id = "EliF77/brawlstars-ranked"
+elo_min = 10.0
+elo_max = 23.0
+
+[fm]
+k            = 32
+lr           = 1e-3
+weight_decay = 1e-4
+batch_size   = 4096
+max_epochs   = 20
+patience     = 3

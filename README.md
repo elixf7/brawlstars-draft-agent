@@ -79,6 +79,34 @@ weights by about 1e-8, close enough to look right and different enough that two
 runs cannot be compared exactly — so strict deterministic algorithms are enabled
 too.
 
+## Results
+
+Season 53, 1,051,296 training games and 262,824 held out **chronologically** — the
+model is judged on matches that happened after everything it learned from.
+
+| Predictor | Log-loss | vs. random | AUC | Brier | ECE |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Constant (base rate) | 0.6931 | +0.0000 | 0.5000 | 0.2500 | 0.0012 |
+| Brawler win rate | 0.6850 | +0.0081 | 0.5971 | 0.2460 | 0.0455 |
+| Brawler × map win rate | 0.6794 | +0.0138 | 0.6240 | 0.2431 | 0.0572 |
+| Pairwise matchup | 0.6834 | +0.0097 | 0.6123 | 0.2452 | 0.0560 |
+| **Factorization machine** | **0.6632** | **+0.0300** | **0.6370** | **0.2354** | **0.0047** |
+
+Each baseline knows one more thing than the last: nothing, then which brawlers
+win, then which win on this map, then which beat which. The model more than
+doubles the best baseline's lift over random, which is the part worth stating —
+a log-loss on its own says nothing.
+
+The calibration column matters as much as the ranking. Tree search multiplies
+probabilities across plies, so a confident-but-wrong evaluator compounds its
+error at every step. The FM's ECE of 0.0047 is an order of magnitude better than
+the count-based baselines, which are sharp but overconfident.
+
+```bash
+uv run bsdraft-eval -c configs/season53.toml
+uv run bsdraft-eval --baselines-only     # before a model exists
+```
+
 ## Comparing runs
 
 Every run is recorded — its config, seed, git commit, dataset revision, metrics,
