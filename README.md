@@ -77,8 +77,10 @@ forward against a modelled opponent, so a pick that looks strong but is easily
 countered gets discounted.
 
 **3. Learn to search less.** Self-play distills the search into a network that
-proposes good picks directly, so the recommendation is fast enough to be useful
-mid-draft.
+proposes good picks directly, so a recommendation doesn't need a live tree
+search. Measured, one round of this helps and further rounds don't — the network
+learns to imitate the search quickly, and the search itself hasn't changed. It
+buys speed, not strength.
 
 ## Where the data comes from
 
@@ -174,7 +176,8 @@ tests/        138 tests, no network required
   sequences; the search has to assume an order.
 - **Self-play is distillation, not reinforcement learning.** Its training signal
   is the win-probability model's own opinion, not match outcomes, so it can
-  learn to search more cheaply but cannot exceed what that model knows.
+  learn to search more cheaply but cannot exceed what that model knows. In
+  practice it plateaus after one iteration.
 - **The sample is not uniform.** Matches are gathered by crawling outward from
   seed players within an elo band, so active and higher-rated players are
   over-represented.

@@ -148,6 +148,31 @@ No new information enters the loop, so it can learn to reach the same answers
 more cheaply but cannot exceed what the evaluator already knows. Describing it
 as RL would overstate it.
 
+### What it actually buys, measured
+
+Three iterations, 150 games each at 2,000 simulations per pick, 13.2 minutes:
+
+| Iteration | Mean win probability vs. previous | Promoted? |
+| ---: | ---: | --- |
+| 0 | 0.5393 | yes |
+| 1 | 0.4982 | no |
+| 2 | 0.5008 | no |
+
+The first policy beats searching without one. The next two are coin flips
+against it. That is the shape the theory predicts: distillation captures the
+search in one pass and then has nothing further to learn, because the evaluator
+it is learning from has not changed.
+
+So **one iteration is the useful one**, and the loop's value is speed — a
+recommendation without a live tree search — rather than strength. Budgeting five
+iterations spends four of them for nothing.
+
+The promotion figure deserves a caveat that the original threshold hid. At 60
+evaluation games, 0.5393 sits somewhere between 1.5 and 3 standard errors above
+even depending on the spread of per-game probabilities. A bare "0.5393 > 0.525"
+reads as decisive and is not, which is why `promotion_verdict` reports the
+margin against its standard error rather than only the comparison.
+
 There is a related trap, now closed. Promotion of a new policy used to be decided
 by the *same* evaluator the policy was being optimised against — so a policy that
 learned to draft compositions the evaluator overrates would be promoted for it,
