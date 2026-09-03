@@ -20,10 +20,35 @@ import pandas as pd
 
 from bsdraft.data.sources import (
     ALL_BRAWLER_COLS,
+    KEEP_COLS,
     TEAM1_BRAWLER_COLS,
+    TEAM2_BRAWLER_COLS,
     DatasetRef,
     load_matches,
 )
+
+# Re-exported: callers have imported these from here since before the source
+# abstraction existed, and __all__ keeps a lint autofix from removing them
+# again as "unused".
+__all__ = [
+    "ALL_BRAWLER_COLS",
+    "KEEP_COLS",
+    "TEAM1_BRAWLER_COLS",
+    "TEAM2_BRAWLER_COLS",
+    "DatasetRef",
+    "DB_PATH",
+    "ELO_MAX",
+    "ELO_MIN",
+    "SEASON_CONFIGS",
+    "build_brawler_vocab",
+    "build_game_dataset",
+    "check_label_balance",
+    "drop_incomplete_teams",
+    "expand_to_games",
+    "load_filtered_matches",
+    "load_matches",
+    "print_dataset_summary",
+]
 
 # ---------------------------------------------------------------------------
 # Paths & constants
