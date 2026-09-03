@@ -30,6 +30,13 @@ def _model_probs(model_path: Path, val_df, schema_path: Path) -> np.ndarray | No
 
     with open(model_path, "rb") as f:
         fm = pickle.load(f)
+
+    # The antisymmetric model takes structured team indices, not a sparse matrix.
+    from bsdraft.fm.ffm import FFMInference
+    if isinstance(fm, FFMInference):
+        from bsdraft.fm.train_ffm import predict_df
+        return predict_df(fm, val_df)
+
     schema = getattr(fm, "schema", None)
     if schema is None:
         with open(schema_path, "rb") as f:

@@ -37,13 +37,19 @@ class DataConfig:
 
 @dataclass(frozen=True)
 class FMConfig:
-    """Factorization machine hyperparameters."""
+    """Win-probability model hyperparameters.
 
-    k: int = 32
+    Defaults are the best configuration found by sweeping against season53.
+    """
+
+    #: "ffm" is antisymmetric and field-aware; "classic" is the original FM,
+    #: kept so existing artifacts stay reproducible.
+    model: str = "ffm"
+    k: int = 64
     lr: float = 1e-3
-    weight_decay: float = 1e-4
-    batch_size: int = 4096
-    max_epochs: int = 50
+    weight_decay: float = 1e-5
+    batch_size: int = 8192
+    max_epochs: int = 40
     patience: int = 5
 
 
@@ -116,4 +122,6 @@ def load_config(path: str | Path | None = None, **overrides: Any) -> RunConfig:
     top = _build(RunConfig, {**raw, **sections}, "run")
     if top.seed < 0:
         raise ConfigError("seed must be non-negative")
+    if top.fm.model not in ("ffm", "classic"):
+        raise ConfigError(f"fm.model must be 'ffm' or 'classic', got {top.fm.model!r}")
     return top

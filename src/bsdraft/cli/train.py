@@ -65,8 +65,6 @@ def store_for(cfg: RunConfig) -> RunStore:
 
 
 def cmd_fm(cfg: RunConfig) -> int:
-    from bsdraft.fm.model import train_fm
-
     source = resolve_source(cfg)
     seed_everything(cfg.seed)
     cfg.run_dir.mkdir(parents=True, exist_ok=True)
@@ -75,18 +73,36 @@ def cmd_fm(cfg: RunConfig) -> int:
         name=cfg.name, stage="fm", seed=cfg.seed, git_commit=_git_commit(),
         dataset=str(source), config=cfg.to_dict(),
     )
-    print(f"[{run_id}] fm  seed={cfg.seed}  source={source}")
+    print(f"[{run_id}] fm({cfg.fm.model})  seed={cfg.seed}  source={source}")
 
     started = time.monotonic()
     try:
-        inference = train_fm(
-            k=cfg.fm.k, lr=cfg.fm.lr, weight_decay=cfg.fm.weight_decay,
-            batch_size=cfg.fm.batch_size, max_epochs=cfg.fm.max_epochs,
-            patience=cfg.fm.patience,
-            model_path=cfg.run_dir / "fm_model.pkl",
-            schema_path=cfg.run_dir / "feature_schema.pkl",
-            source=source, elo_min=cfg.data.elo_min, elo_max=cfg.data.elo_max,
-        )
+        if cfg.fm.model == "ffm":
+            from bsdraft.data.prep import build_game_dataset
+            from bsdraft.features.engineering import chronological_split
+            from bsdraft.fm.train_ffm import train_ffm
+
+            df, _ = build_game_dataset(source, elo_min=cfg.data.elo_min,
+                                       elo_max=cfg.data.elo_max)
+            train_df, val_df = chronological_split(df, val_fraction=0.20)
+            inference = train_ffm(
+                train_df, val_df,
+                k=cfg.fm.k, lr=cfg.fm.lr, weight_decay=cfg.fm.weight_decay,
+                batch_size=cfg.fm.batch_size, max_epochs=cfg.fm.max_epochs,
+                patience=cfg.fm.patience,
+                model_path=cfg.run_dir / "fm_model.pkl",
+            )
+        else:
+            from bsdraft.fm.model import train_fm
+
+            inference = train_fm(
+                k=cfg.fm.k, lr=cfg.fm.lr, weight_decay=cfg.fm.weight_decay,
+                batch_size=cfg.fm.batch_size, max_epochs=cfg.fm.max_epochs,
+                patience=cfg.fm.patience,
+                model_path=cfg.run_dir / "fm_model.pkl",
+                schema_path=cfg.run_dir / "feature_schema.pkl",
+                source=source, elo_min=cfg.data.elo_min, elo_max=cfg.data.elo_max,
+            )
     except BaseException as e:
         store.finish(run_id, status="failed", error=f"{type(e).__name__}: {e}",
                      elapsed_seconds=round(time.monotonic() - started, 1))

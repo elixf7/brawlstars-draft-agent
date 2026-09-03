@@ -90,7 +90,7 @@ model is judged on matches that happened after everything it learned from.
 | Brawler win rate | 0.6850 | +0.0081 | 0.5971 | 0.2460 | 0.0455 |
 | Brawler × map win rate | 0.6794 | +0.0138 | 0.6240 | 0.2431 | 0.0572 |
 | Pairwise matchup | 0.6834 | +0.0097 | 0.6123 | 0.2452 | 0.0560 |
-| **Factorization machine** | **0.6632** | **+0.0300** | **0.6370** | **0.2354** | **0.0047** |
+| **Antisymmetric FFM** | **0.6598** | **+0.0333** | **0.6441** | **0.2339** | **0.0052** |
 
 Each baseline knows one more thing than the last: nothing, then which brawlers
 win, then which win on this map, then which beat which. The model more than
@@ -99,8 +99,31 @@ a log-loss on its own says nothing.
 
 The calibration column matters as much as the ranking. Tree search multiplies
 probabilities across plies, so a confident-but-wrong evaluator compounds its
-error at every step. The FM's ECE of 0.0047 is an order of magnitude better than
-the count-based baselines, which are sharp but overconfident.
+error at every step. The model's ECE is an order of magnitude better than the
+count-based baselines, which are sharp but overconfident.
+
+### The model
+
+A field-aware factorization machine, scored as a difference between the two
+teams so that `P(A beats B) + P(B beats A) = 1` holds **exactly**, by
+construction. Each brawler gets separate embeddings for playing beside a
+teammate, against an opponent (as attacker and as defender, so counters can be
+directional), and with the map, mode and skill context.
+
+The predecessor gave `t1_SHELLY` and `t2_SHELLY` independent embeddings and
+learned symmetry approximately through flip augmentation. On real games it was
+off by 0.047 on average and up to 0.307 — which matters because tree search
+flips the evaluator to model the opponent, and self-play labels the second team
+`1 - p`. Making symmetry structural fixed that, removed the need for
+augmentation (halving the rows, ~15x faster to train), and improved every metric:
+
+| | Log-loss | AUC | Brier | Symmetry error |
+| --- | ---: | ---: | ---: | ---: |
+| Original FM | 0.6631 | 0.6373 | 0.2354 | 0.047 mean / 0.307 max |
+| Antisymmetric FFM | **0.6598** | **0.6441** | **0.2339** | **0 exact** |
+
+Ablating the interaction terms drops AUC from 0.641 to 0.581, so the pairwise
+structure — not the per-brawler weights — is where the model's edge lives.
 
 ```bash
 uv run bsdraft-eval -c configs/season53.toml

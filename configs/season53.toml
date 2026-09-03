@@ -10,9 +10,13 @@ elo_min = 10.0
 elo_max = 23.0
 
 [fm]
-k            = 32
+# Best configuration from a sweep against season53. Unlike the original FM,
+# this one is genuinely sensitive to k and weight decay, so these were chosen
+# rather than inherited.
+model        = "ffm"     # antisymmetric field-aware; "classic" for the original
+k            = 64
 lr           = 1e-3
-weight_decay = 1e-4
-batch_size   = 4096
-max_epochs   = 20
-patience     = 3
+weight_decay = 1e-5
+batch_size   = 8192
+max_epochs   = 40
+patience     = 5
