@@ -52,6 +52,60 @@ def serialise_model(model: FFMInference) -> dict[str, Any]:
     }
 
 
+def _unit(a: np.ndarray) -> np.ndarray:
+    """Scale a field so no one of them dominates the concatenation."""
+    return a / (float(np.linalg.norm(a, axis=1).mean()) + 1e-9)
+
+
+def interaction_space(model: FFMInference) -> np.ndarray:
+    """How each character interacts: beside, against, and defending against.
+
+    Deliberately excludes the context field and the linear weight — those say
+    how *strong* a character is, and mixing strength into a similarity map would
+    put every strong character together regardless of how they play.
+    """
+    return np.hstack([_unit(model.e_syn), _unit(model.e_att), _unit(model.e_def)])
+
+
+def embed_characters(model: FFMInference, *, seed: int = 0) -> dict[str, Any]:
+    """Two-dimensional layouts of the interaction space, plus neighbours.
+
+    PCA keeps distances meaningful but explains only about a fifth of the
+    variance in two dimensions. t-SNE separates groups far more legibly at the
+    cost of global geometry. Both ship; the page lets a reader switch, because
+    they answer different questions.
+    """
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+
+    X = interaction_space(model)
+    pca = PCA(n_components=2, random_state=seed)
+    xy_pca = pca.fit_transform(X)
+    xy_tsne = TSNE(n_components=2, perplexity=18, init="pca",
+                   random_state=seed, max_iter=1200).fit_transform(X)
+
+    unit = X / np.linalg.norm(X, axis=1, keepdims=True)
+    sim = unit @ unit.T
+    np.fill_diagonal(sim, -np.inf)
+    neighbours = {
+        model.vocab[i]: [model.vocab[j] for j in np.argsort(-sim[i])[:4]]
+        for i in range(len(model.vocab))
+    }
+
+    def scaled(a):
+        a = np.asarray(a, dtype=np.float64)
+        span = a.max(axis=0) - a.min(axis=0)
+        span[span == 0] = 1.0
+        return np.round((a - a.min(axis=0)) / span, 4).tolist()
+
+    return {
+        "pca": scaled(xy_pca),
+        "tsne": scaled(xy_tsne),
+        "pca_variance": round(float(pca.explained_variance_ratio_[:2].sum()), 4),
+        "neighbours": neighbours,
+    }
+
+
 def _map_modes(df: pd.DataFrame) -> dict[str, str]:
     """Each map is played in exactly one mode, so the page can infer it."""
     pairs = df[["map", "mode"]].drop_duplicates()
@@ -69,6 +123,16 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
     grouped = stacked.groupby("name")["won"].agg(["sum", "count"])
     grouped = grouped[grouped["count"] >= min_games]
 
+    # Per-mode appearances, so the page can filter to characters that actually
+    # see play in the selected mode.
+    per_mode = {}
+    for cols, _ in ((TEAM1_BRAWLER_COLS, None), (TEAM2_BRAWLER_COLS, None)):
+        for c in cols:
+            sub = df[[c, "mode"]].dropna()
+            for (name, mode), n in sub.groupby([c, "mode"]).size().items():
+                per_mode.setdefault(name, {}).setdefault(mode, 0)
+                per_mode[name][mode] += int(n)
+
     total_slots = len(df) * 6
     out = [
         {
@@ -76,6 +140,7 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
             "games": int(row["count"]),
             "pick_rate": round(float(row["count"]) / total_slots, 5),
             "win_rate": round(float(row["sum"]) / float(row["count"]), 4),
+            "by_mode": per_mode.get(name, {}),
         }
         for name, row in grouped.iterrows()
     ]
@@ -120,6 +185,7 @@ def build_payload(
     return {
         "generated_utc": generated_utc,
         "model": serialise_model(model),
+        "embedding": embed_characters(model),
         "season": season_stats(df, season, dataset),
         "characters": character_stats(df),
         "baselines": BASELINES,

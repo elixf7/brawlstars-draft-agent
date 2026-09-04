@@ -100,6 +100,21 @@ tr.highlight td{background:var(--accent-soft);font-weight:600}
 .chart i{flex:1;background:var(--accent);border-radius:2px 2px 0 0;opacity:.85;min-height:2px}
 .chart i:hover{opacity:1}
 .overflow{overflow-x:auto}
+/* character map */
+.mapwrap{position:relative;background:var(--surface);border:1px solid var(--line);
+ border-radius:12px;padding:.9rem}
+#space{width:100%;height:440px;display:block;cursor:crosshair}
+.legend{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;margin-top:.6rem;
+ font-size:.8rem;color:var(--muted)}
+.ramp{display:flex;align-items:center;gap:.4rem}
+.ramp .swatch{width:88px;height:9px;border-radius:99px;
+ background:linear-gradient(90deg,var(--lose),var(--surface-2),var(--win))}
+#tip{position:absolute;pointer-events:none;opacity:0;transition:opacity .1s;
+ background:var(--surface);border:1px solid var(--line);border-radius:8px;
+ padding:.5rem .65rem;font-size:.82rem;box-shadow:0 4px 16px rgba(0,0,0,.18);
+ max-width:230px;z-index:5}
+#tip b{display:block;margin-bottom:.2rem}
+#tip .nb{color:var(--muted);font-size:.78rem;margin-top:.25rem}
 footer{margin-top:3rem;padding-top:1.4rem;border-top:1px solid var(--line);
  color:var(--muted);font-size:.84rem}
 .note{font-size:.85rem;color:var(--muted);margin:.5rem 0 0}
@@ -242,6 +257,105 @@ function fillPickList(q){
   });
 }
 
+/* ---- character map ---- */
+const SP = { layout:"tsne", mode:"", map:"", skill:0, hot:null, pts:[] };
+
+function strengthOf(b, ctx){          // the model's view of a character alone
+  const i=idx[b]; let s=M.w[i];
+  for(let j=0;j<K;j++) s+=M.e_ctx[i][j]*ctx[j];
+  return s;
+}
+function spCtx(){
+  const v=new Float64Array(K);
+  const mapName = SP.map || null;
+  const modeName = SP.map ? D.season.map_modes[SP.map] : (SP.mode || null);
+  if(mapName!==null){ const mi=mapIdx[mapName]; for(let j=0;j<K;j++) v[j]+=M.m_map[mi][j]; }
+  if(modeName!==null){ const mo=modeIdx[modeName]; if(mo!==undefined) for(let j=0;j<K;j++) v[j]+=M.m_mode[mo][j]; }
+  for(let j=0;j<K;j++) v[j]+=M.v_skill[j]*SP.skill;
+  return v;
+}
+function selectedMode(){ return SP.map ? D.season.map_modes[SP.map] : SP.mode; }
+function visibleChars(){
+  const mode=selectedMode();
+  return M.vocab.filter(b=>{
+    const st=stats[b]; if(!st) return false;
+    return !mode || (st.by_mode||{})[mode];
+  });
+}
+/* Dot size is how often a character is picked *in the selected mode*, so the
+   mode control changes what the map emphasises and not only its colour. */
+function pickShare(b){
+  const st=stats[b], mode=selectedMode();
+  if(!mode) return st.pick_rate;
+  const n=(st.by_mode||{})[mode]||0;
+  return n / (SP._modeTotal||1);
+}
+function modeTotal(){
+  const mode=selectedMode();
+  if(!mode) return 1;
+  let t=0; for(const b of M.vocab){ const st=stats[b]; if(st) t+=(st.by_mode||{})[mode]||0; }
+  return t||1;
+}
+function drawSpace(){
+  const cv=$("#space"), dpr=window.devicePixelRatio||1;
+  const w=cv.clientWidth, h=cv.clientHeight;
+  cv.width=w*dpr; cv.height=h*dpr;
+  const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+
+  const coords=D.embedding[SP.layout], ctx=spCtx(), shown=visibleChars();
+  const vals=shown.map(b=>strengthOf(b,ctx));
+  const lo=Math.min(...vals), hi=Math.max(...vals), span=(hi-lo)||1;
+  SP._modeTotal=modeTotal();
+  const maxPick=Math.max(...shown.map(pickShare));
+  const pad=26;
+  SP.pts=[];
+  const css=getComputedStyle(document.body);
+  const win=css.getPropertyValue("--win").trim(), lose=css.getPropertyValue("--lose").trim();
+  const mid=css.getPropertyValue("--surface-2").trim();
+
+  for(const b of shown){
+    const i=M.vocab.indexOf(b), c=coords[i];
+    const x=pad+c[0]*(w-2*pad), y=pad+(1-c[1])*(h-2*pad);
+    const t=(strengthOf(b,ctx)-lo)/span;
+    const r=4+8*Math.sqrt(pickShare(b)/maxPick);
+    g.beginPath(); g.arc(x,y,r,0,6.284);
+    g.fillStyle = t>0.5 ? mixHex(mid,win,(t-0.5)*2) : mixHex(lose,mid,t*2);
+    g.fill();
+    g.lineWidth=1; g.strokeStyle=css.getPropertyValue("--line").trim(); g.stroke();
+    SP.pts.push({b,x,y,r,t});
+  }
+  // Label only the most-picked, so the map stays readable.
+  g.font="11px ui-sans-serif,system-ui,sans-serif";
+  g.fillStyle=css.getPropertyValue("--ink-2").trim();
+  [...SP.pts].sort((a,c)=>pickShare(c.b)-pickShare(a.b)).slice(0,14)
+    .forEach(p=>g.fillText(pretty(p.b), p.x+p.r+3, p.y+3));
+  $("#pca-note").textContent = SP.layout==="pca"
+    ? `PCA shows ${(D.embedding.pca_variance*100).toFixed(0)}% of the variation`
+    : `${shown.length} characters${selectedMode()?" · sized by picks in "+selectedMode():""}`;
+}
+function mixHex(a,b,t){
+  const p=h=>{h=h.replace("#","");return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));};
+  const [r1,g1,b1]=p(a),[r2,g2,b2]=p(b), m=(x,y)=>Math.round(x+(y-x)*Math.max(0,Math.min(1,t)));
+  return `rgb(${m(r1,r2)},${m(g1,g2)},${m(b1,b2)})`;
+}
+function spaceHover(e){
+  const cv=$("#space"), r=cv.getBoundingClientRect();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  let best=null, bd=1e9;
+  for(const p of SP.pts){ const d=(p.x-mx)**2+(p.y-my)**2; if(d<bd){bd=d;best=p;} }
+  const tip=$("#tip");
+  if(best && bd < (best.r+9)**2){
+    const st=stats[best.b], nb=(D.embedding.neighbours[best.b]||[]).slice(0,3);
+    const mode=selectedMode();
+    tip.innerHTML=`<b>${pretty(best.b)}</b>
+      ${(st.win_rate*100).toFixed(1)}% win · ${(pickShare(best.b)*100).toFixed(2)}% picked${mode?" in "+mode:""}
+      <div class="nb">plays most like: ${nb.map(pretty).join(", ")}</div>`;
+    tip.style.opacity=1;
+    tip.style.left=Math.min(best.x+14, r.width-240)+"px";
+    tip.style.top=Math.max(best.y-10,0)+"px";
+  } else tip.style.opacity=0;
+}
+
 /* ---- boot ---- */
 function init(){
   const sel=$("#map");
@@ -262,6 +376,22 @@ function init(){
     $("#map").value=state.map; $("#mode-label").textContent=D.season.map_modes[state.map]||"";
     update();
   };
+  // character map
+  $("#sp-mode").innerHTML='<option value="">All modes</option>'+
+    D.season.modes.map(m=>`<option>${m}</option>`).join("");
+  $("#sp-map").innerHTML='<option value="">All maps</option>'+
+    D.season.maps.map(m=>`<option>${m}</option>`).join("");
+  $("#layout").onchange=e=>{SP.layout=e.target.value; drawSpace();};
+  $("#sp-mode").onchange=e=>{SP.mode=e.target.value; if(SP.mode) {SP.map=""; $("#sp-map").value="";} drawSpace();};
+  $("#sp-map").onchange=e=>{SP.map=e.target.value; if(SP.map) {SP.mode=""; $("#sp-mode").value="";} drawSpace();};
+  $("#sp-skill").oninput=e=>{SP.skill=parseFloat(e.target.value);
+    $("#sp-skill-label").textContent=SP.skill>0.6?"high elo":SP.skill<-0.6?"low elo":"average";
+    drawSpace();};
+  $("#space").onmousemove=spaceHover;
+  $("#space").onmouseleave=()=>{$("#tip").style.opacity=0;};
+  window.addEventListener("resize", drawSpace);
+  drawSpace();
+
   $("#pick-search").oninput=e=>fillPickList(e.target.value);
   $("#pick-close").onclick=()=>$("#picker").close();
   update();
@@ -342,6 +472,33 @@ entirely in your browser — try it below.</p>
   </div>
   <div id="recs"></div>
 </div>
+
+<h2>How the model sees characters</h2>
+<div class="mapwrap">
+  <div class="controls">
+    <label>Layout <select id="layout">
+      <option value="tsne">t-SNE (clearer groups)</option>
+      <option value="pca">PCA (faithful distances)</option>
+    </select></label>
+    <label>Mode <select id="sp-mode"><option value="">All modes</option></select></label>
+    <label>Map <select id="sp-map"><option value="">All maps</option></select></label>
+    <label>Skill <input type="range" id="sp-skill" min="-2" max="2" step="0.25" value="0"></label>
+    <span class="muted" id="sp-skill-label">average</span>
+  </div>
+  <canvas id="space"></canvas>
+  <div id="tip"></div>
+  <div class="legend">
+    <span class="ramp">weaker <span class="swatch"></span> stronger</span>
+    <span id="size-note">dot size = how often it is picked</span>
+    <span id="pca-note"></span>
+  </div>
+</div>
+<p class="note"><strong>Position</strong> is how a character interacts — who it works
+beside, who it beats, who beats it — learned only from wins and losses. Nothing told the
+model what a tank or a sniper is, yet they land together.
+<strong>Colour</strong> is how strong it is in the context you choose, and
+<strong>size</strong> is how often it is picked there — those are the parts the map, mode
+and skill controls change.</p>
 
 <h2>Games collected per day</h2>
 <div class="chart">{bars}</div>
