@@ -1,127 +1,135 @@
 # Brawl Stars Draft Agent
 
-**Which character should you pick next?**
-
-Brawl Stars is a team game where two sides alternately pick three characters
-each, before the match starts. Those six picks decide a lot: some characters
-counter others, some work well together, and what's strong depends on the map.
-Once the picking is over, you play the team you built.
-
-This project learns which picks win, from 1.3 million real ranked games, and
-recommends the next one.
+Estimates which side a ranked draft favours, and recommends what to pick next.
+Trained on 1.3 million games.
 
 [![CI](https://github.com/elixf7/brawlstars-draft-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/elixf7/brawlstars-draft-agent/actions/workflows/ci.yml)
+[![Train](https://github.com/elixf7/brawlstars-draft-agent/actions/workflows/train.yml/badge.svg)](https://github.com/elixf7/brawlstars-draft-agent/actions/workflows/train.yml)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Dataset](https://img.shields.io/badge/data-Hugging%20Face-yellow)](https://huggingface.co/datasets/EliF77/brawlstars-ranked)
+
+**[Try the draft assistant →](https://elixf7.github.io/brawlstars-draft-agent/)** ·
+**[Dataset →](https://huggingface.co/datasets/EliF77/brawlstars-ranked)** ·
+**[Data pipeline →](https://github.com/elixf7/brawlstars-data-pipeline)**
 
 ---
 
-## Why this is hard
+## What it does
 
-You are predicting the winner of a match that hasn't been played, from nothing
-but the six characters chosen and the map. No player skill history, no in-game
-events — just the draft.
+Six characters get picked before a ranked match starts, in a snake order, on a
+known map. Some pairs work together, some counter each other, and what is strong
+depends on the map and the skill of the lobby. This estimates the win
+probability of a completed draft, and uses that to rank what to pick next.
 
-There is a ceiling on how well anyone can do that. Matches are decided by
-execution as much as by composition, and the better team loses often. A model
-that claimed 90% accuracy here would be broken, not brilliant. The honest
-question is: **how much better than guessing can you get, and is it more than
-you'd get from simply counting?**
+The dashboard runs the model in your browser. Fill in either side and the
+probability moves as you pick, with the strongest remaining options listed
+beneath — and an adjustable amount of lookahead, which changes the answer.
 
 ## What it achieves
 
-Every predictor below is scored on the same 262,824 games, held out **by time** —
-so the model is judged on matches played after everything it learned from, the
-way it would be used.
+Every predictor below is scored on the same 262,824 games, held out **by date**,
+so the model is judged on matches played after everything it learned from.
 
 ![What each approach is worth](figures/baseline_comparison.png)
 
-| Predictor | What it knows | Log-loss | AUC | Calibration error |
+| Predictor | What it uses | Log-loss | AUC | Calibration error |
 | --- | --- | ---: | ---: | ---: |
-| Coin flip | Nothing | 0.6931 | 0.500 | 0.001 |
+| Constant | Nothing | 0.6931 | 0.500 | 0.001 |
 | Character win rates | Which characters win | 0.6850 | 0.597 | 0.046 |
-| Character × map | ...and where they win | 0.6794 | 0.624 | 0.057 |
-| Head-to-head rates | Which characters beat which | 0.6834 | 0.612 | 0.056 |
-| **This model** | **All of it, jointly** | **0.6598** | **0.644** | **0.005** |
+| Character × map | …and where | 0.6794 | 0.624 | 0.057 |
+| Head-to-head rates | Which beat which | 0.6834 | 0.612 | 0.056 |
+| **This model** | All of it, jointly | **0.6598** | **0.644** | **0.005** |
 
-Lower log-loss is better; 0.6931 is what you score knowing nothing at all.
+Log-loss penalises confident mistakes; 0.6931 is the score for predicting 50%
+every time. The comparison is the result rather than the absolute number —
+counting character-and-map win rates already reaches 0.6794, so a model near
+that figure would add nothing over a lookup table. This one captures **more than
+twice** the signal of the best count-based alternative.
 
-**The model captures more than twice as much signal as the best simple
-alternative** — and that comparison is the result, not the raw number. Counting
-character-and-map win rates already reaches 0.6794, so a model reporting "0.68"
-would have been beaten by a lookup table.
+Calibration matters as much as ranking, because the recommender combines these
+probabilities across simulated drafts. An evaluator that is confidently wrong
+compounds its error; one that is honestly uncertain does not. The count-based
+methods rank respectably and are badly overconfident.
 
-**It also knows how confident to be.** The calibration column measures whether
-"65% likely to win" actually happens 65% of the time. The counting methods rank
-matchups reasonably but are badly overconfident. That distinction matters here
-because the recommender searches thousands of possible drafts and multiplies
-these probabilities together — an evaluator that is confidently wrong compounds
-its error at every step, while one that is honestly uncertain does not.
-
-### It keeps getting better with more data
-
-![More data still helps](figures/learning_curve.png)
-
-There is no plateau at a million games, which is why the companion pipeline
-collects continuously and this model is retrained as the data grows. It also sets
-a floor: below roughly 100,000 games the model is **worse than counting**, so an
-early-season model is checked against the baselines before it is used.
+**A note on the ceiling.** Matches are decided by execution as much as by
+composition, and the better draft loses routinely. An AUC of 0.64 is a real edge
+on a genuinely noisy target, not a strong classifier.
 
 ## How it works
 
-**1. Learn what wins.** A factorization machine over the six characters, the
-map, the mode, and the skill level of the lobby. Rather than one weight per
-character, it learns a small vector for each, so it can express that two
-characters work well *together* or that one *counters* another — the pairwise
-effects that make drafting interesting. Removing those interactions drops AUC
-from 0.644 to 0.581, so that structure is where the value is.
+### The win-probability model
 
-The model scores a draft as the difference between the two teams, which
-guarantees something you'd want to be true: its answer to "does A beat B" is
-always exactly the inverse of "does B beat A". [The earlier version learned this
-approximately and could disagree with itself by up to 0.31.](docs/MODEL.md)
+A field-aware factorization machine. Rather than one weight per character it
+learns several short vectors for each — one for playing *beside* a teammate, one
+for playing *against* an opponent, one for suiting the map and skill context.
+Interactions are the model: removing them drops AUC from 0.644 to 0.581.
 
-**2. Search ahead.** A single pick isn't good or bad on its own — it depends on
-what the opponent does next. Monte Carlo tree search plays the rest of the draft
-forward against a modelled opponent, so a pick that looks strong but is easily
-countered gets discounted.
+The score is a **difference between the two teams**, which makes
+`P(A beats B) + P(B beats A) = 1` exact by construction rather than something
+learned approximately. Tree search depends on that identity, since it flips the
+evaluator to model the opponent.
 
-**3. Learn to search less.** Self-play distills the search into a network that
-proposes good picks directly, so a recommendation doesn't need a live tree
-search. Measured, one round of this helps and further rounds don't — the network
-learns to imitate the search quickly, and the search itself hasn't changed. It
-buys speed, not strength.
+Counters use separate attack and defend vectors, because an inner product is
+symmetric and a single vector per character would say the same thing about "A
+beats B" as about "B beats A".
 
-## Where the data comes from
+It is small — 29,354 parameters — which is why the dashboard can ship the whole
+model to the browser and run inference client-side.
 
-A companion project — **[brawlstars-data-pipeline](https://github.com/elixf7/brawlstars-data-pipeline)** —
-crawls the Brawl Stars API on a schedule and publishes ranked matches as a
-versioned dataset on [Hugging Face](https://huggingface.co/datasets/EliF77/brawlstars-ranked).
+### Searching the draft
 
-This repository reads from that dataset **pinned to an exact revision**. That
-matters more than it sounds: the dataset grows every time the pipeline runs, so
-"trained on the dataset" would not be reproducible. "Trained on commit `4c45efee`"
-is.
+A pick is not good or bad on its own; it depends on the reply. Monte Carlo tree
+search plays the remaining picks forward against a modelled opponent, so a
+character that scores well alone but is easily answered gets discounted.
 
-```bash
-uv run bsdraft-data seasons          # what's published
-uv run bsdraft-data resolve season53 # pin it to a commit
+The dashboard does a lighter version of this — each of the strongest candidates
+is played out to a full six-pick draft, repeatedly — and the difference is
+visible: with lookahead off the top recommendation changes.
+
+### Learning to search less
+
+Self-play distils the search into a policy network that proposes strong picks
+directly, so a recommendation does not require a live tree search.
+
+This is distillation rather than reinforcement learning: the training signal is
+the win-probability model's own judgement of the finished draft, not a match
+outcome. It learns to reach the same answers faster, and cannot exceed what the
+evaluator knows. Promotion of a new policy is decided by a *second* evaluator
+trained on a different half of the season, so the policy is not judged by the
+thing it was optimised against.
+
+### What the model learned about roles
+
+Projecting each character's learned interaction vectors puts El Primo beside
+Darryl, Bull and Bibi; Piper beside Angelo, Squeak and Nani; Mortis beside Alli,
+Lily and Kenji.
+
+Nothing told the model what a tank or a sniper is. It only ever saw which drafts
+won. The [character map](https://elixf7.github.io/brawlstars-draft-agent/) on the
+dashboard is that projection, coloured by strength in whatever context you
+select.
+
+## The data
+
+A companion project,
+[brawlstars-data-pipeline](https://github.com/elixf7/brawlstars-data-pipeline),
+crawls the game's API on a schedule and publishes ranked matches as a versioned
+dataset. Training reads it **pinned to an exact commit**:
+
+```python
+from bsdraft.data.sources import resolve_dataset
+ref = resolve_dataset("season53")   # EliF77/brawlstars-ranked@4c45efee:season53
 ```
 
-## Try it
+That matters because the dataset grows every time the pipeline runs. "Trained on
+the dataset" is not reproducible; "trained on commit `4c45efee`" is.
 
-**[elixf7.github.io/brawlstars-draft-agent](https://elixf7.github.io/brawlstars-draft-agent/)** —
-a mock draft you can play with. Pick characters for either side, change the map,
-and the win probability updates as you go, along with a ranked list of the best
-next pick for whoever's turn it is.
+![More data still helps](figures/learning_curve.png)
 
-The model is small enough (29,354 parameters) to ship to the browser whole, so
-the page runs inference itself — no server, no latency. That is a consequence of
-the factorized design rather than an accident.
-
-The page also carries live season analytics from the companion pipeline: games
-collected per day, the most-picked characters, and the baseline comparison above.
+There is no plateau at a million games, which is why the model is retrained
+weekly. It also sets a floor: below roughly 100,000 games the model scores worse
+than counting, so an early-season model is checked against the baselines before
+it replaces anything.
 
 ## Running it
 
@@ -129,12 +137,12 @@ Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-uv run bsdraft-train fm -c configs/season53.toml   # ~20 seconds
-uv run bsdraft-eval     -c configs/season53.toml   # the table above
+uv run bsdraft-train fm   -c configs/season53.toml   # ~20 seconds
+uv run bsdraft-eval       -c configs/season53.toml   # the table above
+uv run bsdraft-dashboard  -c configs/season53.toml   # rebuild the page
 ```
 
-A run is described by a config file, not by remembered arguments. Everything it
-needs is in there — the data, the hyperparameters, the seed:
+A run is described by a config file rather than remembered arguments:
 
 ```toml
 name = "season53"
@@ -150,26 +158,23 @@ k     = 64
 lr    = 1e-3
 ```
 
-Runs are **bit-for-bit reproducible**: the same config and seed produce identical
-weights. Seeding alone doesn't achieve that — floating-point reduction order
-stays free and drifts weights by around 1e-8, close enough to look right and
-different enough that two runs can't be compared — so strict deterministic
-algorithms are enabled as well.
+Runs are **bit-for-bit reproducible** — the same config and seed produce
+identical weights. Seeding alone does not achieve that, since floating-point
+reduction order stays free, so deterministic algorithms are enabled as well.
 
-## Keeping track of experiments
+### Tracking experiments
 
-Every run records what produced it: parameters, metrics, the git commit, the
-dataset revision, and the artifacts it wrote with their content hashes.
+Every run records its configuration, metrics, git commit, dataset revision, and
+the artifacts it produced with their content hashes.
 
 ```bash
-uv run bsdraft-dashboard -c configs/season53.toml   # rebuild the page
 uv run bsdraft-runs list                       # recent runs and their metrics
 uv run bsdraft-runs best --metric val_logloss  # the winner, and where its model is
 uv run bsdraft-runs compare <run-a> <run-b>
 ```
 
-`compare` diffs the configurations as well, so *why* two runs differ appears next
-to *how* they differ:
+`compare` diffs the configurations too, so *why* two runs differ sits beside
+*how* they differ:
 
 ```
 metric          181322-b0d7bf   181318-f1c952   181314-755698
@@ -180,27 +185,23 @@ config differences
   fm.k                       64              32               8
 ```
 
-## Retraining
+### Retraining
 
-[`.github/workflows/train.yml`](.github/workflows/train.yml) runs every Friday,
-after the pipeline's Thursday collection.
+[`.github/workflows/train.yml`](.github/workflows/train.yml) runs weekly, after
+the pipeline's collection.
 
 ```
-retrain model  ──▶  gate  ──▶  self-play  ──▶  dashboard  ──▶  Pages
-   ~20 seconds     must beat    weeks 2 & 4     rebuilt       deployed
-                   baselines    of the season
+retrain  ──▶  gate  ──▶  self-play  ──▶  dashboard  ──▶  published
+ 20 sec      must beat   weeks 2 & 4      rebuilt        to Pages
+             baselines   of the season
 ```
 
-The cadence is asymmetric because the two stages behave differently. The model
-keeps improving as data accumulates and trains in seconds, so it runs weekly.
-Self-play plateaus after a single iteration — measured, iterations 2 and 3 scored
-0.498 and 0.501 against iteration 1 — so it runs twice a season instead: once
-there is enough new data to distil, and again once the meta has settled.
+The cadence is asymmetric because the stages behave differently. The model keeps
+improving as data accumulates and trains in seconds, so it runs weekly.
+Self-play plateaus after one iteration, so it runs twice a season instead.
 
-**Nothing publishes unless it earns it.** The gate requires the model to beat
-every baseline, on at least 100,000 training and 10,000 held-out games. That
-floor is not arbitrary: below it the model scores worse than a lookup table, so
-early in a season the previous model stays in place.
+Nothing publishes unless it earns it: the gate requires beating every baseline
+on at least 100,000 training and 10,000 held-out games.
 
 ## Layout
 
@@ -211,34 +212,33 @@ src/bsdraft/
   fm/         the win-probability model
   mcts/       draft state, tree search, recommendation
   selfplay/   self-play and the networks trained on it
-  eval/       baselines, metrics, and the independent judge
+  eval/       baselines, metrics, the independent judge
+  dashboard/  the static page and its payload
 configs/      run definitions
-notebooks/    exploration
-tests/        138 tests, no network required
+tests/        151 tests, no network required
 ```
 
-## Honest limitations
-
-- **Pick order is unrecoverable.** The API returns the six final characters with
-  no record of who picked when, and no bans. The model sees compositions, not
-  sequences; the search has to assume an order.
-- **Self-play is distillation, not reinforcement learning.** Its training signal
-  is the win-probability model's own opinion, not match outcomes, so it can
-  learn to search more cheaply but cannot exceed what that model knows. In
-  practice it plateaus after one iteration.
-- **The sample is not uniform.** Matches are gathered by crawling outward from
-  seed players within an elo band, so active and higher-rated players are
-  over-represented.
-- **One season at a time.** Balance changes shift what's strong, so models are
-  trained per season rather than pooled.
+Tests run against a committed sample of 4,000 real games, so feature
+construction and the split are exercised on realistic data.
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [`docs/MODEL.md`](docs/MODEL.md) | The model, why it's built this way, and what the numbers mean |
+| [`docs/MODEL.md`](docs/MODEL.md) | The model, and what the numbers mean |
+| [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) | Intended use, performance, limitations |
 | [`docs/DATA.md`](docs/DATA.md) | Where the data comes from and what a row is |
-| [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) | Intended use, performance, and limitations |
+
+## Limitations
+
+- **No pick order or bans.** The API returns the six final characters with no
+  record of who picked when. The model sees compositions, not sequences.
+- **Self-play is bounded by the evaluator**, since that is what supplies its
+  training signal.
+- **The sample is not uniform** — crawling outward from seed players within an
+  elo band over-represents active and higher-rated players.
+- **One season per model.** Balance changes move what is strong, so seasons are
+  not pooled.
 
 ## License
 
