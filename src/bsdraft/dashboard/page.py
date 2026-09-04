@@ -129,7 +129,7 @@ const modeIdx = Object.fromEntries(M.modes.map((m,i)=>[m,i]));
 const stats = Object.fromEntries(D.characters.map(c=>[c.name,c]));
 
 const state = { ally:[null,null,null], enemy:[null,null,null],
-                map: D.season.maps[0], skill: 0 };
+                map: D.season.maps[0], skill: 0, sims: 0 };
 
 /* ---- inference: the same arithmetic as the Python model ---- */
 const dot=(a,b)=>{let s=0;for(let i=0;i<K;i++)s+=a[i]*b[i];return s;};
@@ -202,27 +202,83 @@ function update(){
   renderRecs();
 }
 
+/* Simulate the rest of the draft.
+
+   With sims=0 this is a single-ply evaluation: add the pick, score the board.
+   Above that, each candidate is played out to a full six-pick draft `sims`
+   times. Remaining picks are sampled from the strongest few options for
+   whoever's turn it is — greedy play would give one deterministic line, and
+   uniform random would mostly explore drafts nobody would make.
+
+   This is what changes a pick that looks strong alone into one that survives a
+   reply, which is the whole reason the real system searches at all. */
+function rollout(ally, enemy, allyTurnFirst, rng){
+  let a=[...ally], e=[...enemy];
+  const taken=new Set([...a,...e]);
+  const pool=M.vocab.filter(b=>!taken.has(b));
+  let allyTurn=allyTurnFirst;
+  while(a.length+e.length<6){
+    const side = a.length>=3 ? false : (e.length>=3 ? true : allyTurn);
+    // Look at a random subset, take the best of it: cheap, and keeps lines varied.
+    let best=null, bestv=side?-1:2;
+    for(let t=0;t<6;t++){
+      const c=pool[(rng()*pool.length)|0];
+      if(!c || taken.has(c)) continue;
+      const v = side ? winProb([...a,c],e) : winProb(a,[...e,c]);
+      if(side ? v>bestv : v<bestv){ bestv=v; best=c; }
+    }
+    if(!best) break;
+    taken.add(best);
+    if(side) a.push(best); else e.push(best);
+    allyTurn=!allyTurn;
+  }
+  return winProb(a,e);
+}
+function mulberry(seed){ return ()=>{ seed|=0; seed=seed+0x6D2B79F5|0;
+  let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t;
+  return ((t^t>>>14)>>>0)/4294967296; }; }
+
 function renderRecs(){
   const a=filled(state.ally), e=filled(state.enemy);
   const host=$("#recs");
   if(a.length===3 && e.length===3){
-    host.innerHTML = `<p class="note">Draft complete. Remove a pick to see alternatives.</p>`;
+    host.innerHTML = `<p class="note">Draft complete — remove a pick to compare alternatives.</p>`;
     return;
   }
-  // Whose turn: fill your team first, then theirs, alternating by what's empty.
   const forAlly = a.length <= e.length;
   const base = (a.length||e.length) ? winProb(a,e) : 0.5;
   const taken = new Set([...a,...e]);
-  const scored=[];
+  const sims = state.sims;
+
+  // Shortlist on the immediate value, then spend the simulations on those.
+  let scored=[];
   for(const b of M.vocab){
     if(taken.has(b)) continue;
     const p = forAlly ? winProb([...a,b],e) : winProb(a,[...e,b]);
-    scored.push({b, p, d:(forAlly?p:1-p) - (forAlly?base:1-base)});
+    scored.push({b, p});
   }
   scored.sort((x,y)=> forAlly ? y.p-x.p : x.p-y.p);
+
+  if(sims>0){
+    const shortlist=scored.slice(0,24);
+    const rng=mulberry(12345);
+    for(const c of shortlist){
+      const na = forAlly ? [...a,c.b] : a;
+      const ne = forAlly ? e : [...e,c.b];
+      let acc=0;
+      for(let i=0;i<sims;i++) acc+=rollout(na,ne,!forAlly,rng);
+      c.p = acc/sims;
+    }
+    shortlist.sort((x,y)=> forAlly ? y.p-x.p : x.p-y.p);
+    scored=shortlist;
+  }
+  scored.forEach(c=>{ c.d=(forAlly?c.p:1-c.p)-(forAlly?base:1-base); });
   const top=scored.slice(0,8);
-  host.innerHTML = `<p class="note">Best next pick for <strong>${forAlly?"your team":"the enemy"}</strong>,
-    ranked by resulting win probability.</p><div class="recs">` +
+  const how = state.sims>0
+    ? `each option played out to a full draft ${state.sims}×`
+    : `scored immediately, without looking ahead`;
+  host.innerHTML = `<p class="note">Best next pick for
+    <strong>${forAlly?"your team":"the opponent"}</strong> — ${how}.</p><div class="recs">` +
     top.map(r=>`<div class="rec" data-b="${r.b}" data-side="${forAlly?"ally":"enemy"}">
       <span class="n">${pretty(r.b)}</span>
       <span class="d ${r.d>=0?"up":"down"}">${(r.p*100).toFixed(1)}%</span></div>`).join("")+"</div>";
@@ -255,6 +311,26 @@ function fillPickList(q){
     state[picking.side][picking.slot]=el.dataset.b;
     $("#picker").close(); update();
   });
+}
+
+/* skill_ns is an elo percentile mapped through the normal quantile function,
+   so the percentile a reader recognises is just the normal CDF of it. */
+function normalCdf(z){
+  const t=1/(1+0.2316419*Math.abs(z));
+  const d=0.3989423*Math.exp(-z*z/2);
+  let p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));
+  return z>0 ? 1-p : p;
+}
+function ordinal(n){
+  const t=n%100, u=n%10;
+  const suf = (t>=11&&t<=13) ? "th" : u===1 ? "st" : u===2 ? "nd" : u===3 ? "rd" : "th";
+  return `${n}${suf}`;
+}
+function skillLabel(z){
+  const pct=normalCdf(z)*100;
+  if(pct>=99) return "top 1% of lobbies";
+  if(pct<=1)  return "bottom 1% of lobbies";
+  return `${ordinal(Math.round(pct))} percentile lobby`;
 }
 
 /* ---- character map ---- */
@@ -356,6 +432,40 @@ function spaceHover(e){
   } else tip.style.opacity=0;
 }
 
+/* ---- characters table ---- */
+const CT = { mode:"", map:"", sort:"picks", dir:"desc", expanded:false };
+
+function ctRows(){
+  const mode = CT.map ? D.season.map_modes[CT.map] : CT.mode;
+  let rows = D.characters.filter(c => !mode || (c.by_mode||{})[mode]);
+  let total = 1;
+  if(mode){ total = rows.reduce((t,c)=>t+((c.by_mode||{})[mode]||0),0) || 1; }
+  rows = rows.map(c=>{
+    const games = mode ? (c.by_mode||{})[mode] : c.games;
+    return {name:c.name, games, share: mode ? games/total : c.pick_rate,
+            win: c.win_rate};
+  });
+  const key = CT.sort==="win" ? (r=>r.win) : CT.sort==="name" ? (r=>r.name) : (r=>r.games);
+  rows.sort((a,b)=>{
+    const x=key(a), y=key(b);
+    const c = typeof x==="string" ? x.localeCompare(y) : x-y;
+    return CT.dir==="desc" ? -c : c;
+  });
+  return rows;
+}
+function renderTable(){
+  const rows=ctRows();
+  const shown = CT.expanded ? rows : rows.slice(0,12);
+  $("#ct-body").innerHTML = shown.map(r=>
+    `<tr><td>${pretty(r.name)}</td><td class="num">${(r.share*100).toFixed(2)}%</td>
+     <td class="num">${(r.win*100).toFixed(1)}%</td>
+     <td class="num">${r.games.toLocaleString()}</td></tr>`).join("");
+  const mode = CT.map ? D.season.map_modes[CT.map] : CT.mode;
+  $("#ct-count").textContent = `${rows.length} characters${mode?" in "+mode:""}`;
+  $("#ct-more").textContent = CT.expanded
+    ? "Show fewer" : `Show all ${rows.length} characters`;
+}
+
 /* ---- boot ---- */
 function init(){
   const sel=$("#map");
@@ -366,7 +476,11 @@ function init(){
 
   const sk=$("#skill");
   sk.oninput=()=>{state.skill=parseFloat(sk.value);
-    $("#skill-label").textContent=sk.value>0.6?"high":sk.value<-0.6?"low":"average"; update();};
+    $("#skill-label").textContent=skillLabel(state.skill); update();};
+  $("#skill-label").textContent=skillLabel(0);
+
+  const simSel=$("#sims");
+  simSel.onchange=()=>{state.sims=parseInt(simSel.value,10); update();};
 
   $("#clear").onclick=()=>{state.ally=[null,null,null];state.enemy=[null,null,null];update();};
   $("#random").onclick=()=>{
@@ -376,6 +490,19 @@ function init(){
     $("#map").value=state.map; $("#mode-label").textContent=D.season.map_modes[state.map]||"";
     update();
   };
+  // characters table
+  $("#ct-mode").innerHTML='<option value="">All modes</option>'+
+    D.season.modes.map(m=>`<option>${m}</option>`).join("");
+  $("#ct-map").innerHTML='<option value="">All maps</option>'+
+    D.season.maps.map(m=>`<option>${m}</option>`).join("");
+  $("#ct-mode").onchange=e=>{CT.mode=e.target.value; if(CT.mode){CT.map="";$("#ct-map").value="";} renderTable();};
+  $("#ct-map").onchange=e=>{CT.map=e.target.value; if(CT.map){CT.mode="";$("#ct-mode").value="";} renderTable();};
+  $("#ct-sort").onchange=e=>{CT.sort=e.target.value; renderTable();};
+  $("#ct-dir").onclick=e=>{CT.dir = CT.dir==="desc"?"asc":"desc";
+    e.target.textContent = CT.dir==="desc"?"Descending":"Ascending"; renderTable();};
+  $("#ct-more").onclick=()=>{CT.expanded=!CT.expanded; renderTable();};
+  renderTable();
+
   // character map
   $("#sp-mode").innerHTML='<option value="">All modes</option>'+
     D.season.modes.map(m=>`<option>${m}</option>`).join("");
@@ -385,8 +512,8 @@ function init(){
   $("#sp-mode").onchange=e=>{SP.mode=e.target.value; if(SP.mode) {SP.map=""; $("#sp-map").value="";} drawSpace();};
   $("#sp-map").onchange=e=>{SP.map=e.target.value; if(SP.map) {SP.mode=""; $("#sp-mode").value="";} drawSpace();};
   $("#sp-skill").oninput=e=>{SP.skill=parseFloat(e.target.value);
-    $("#sp-skill-label").textContent=SP.skill>0.6?"high elo":SP.skill<-0.6?"low elo":"average";
-    drawSpace();};
+    $("#sp-skill-label").textContent=skillLabel(SP.skill); drawSpace();};
+  $("#sp-skill-label").textContent=skillLabel(0);
   $("#space").onmousemove=spaceHover;
   $("#space").onmouseleave=()=>{$("#tip").style.opacity=0;};
   window.addEventListener("resize", drawSpace);
@@ -403,7 +530,6 @@ document.addEventListener("DOMContentLoaded", init);
 def render(payload: dict[str, Any]) -> str:
     s = payload["season"]
     m = payload["model"]["metrics"]
-    chars = payload["characters"]
     peak = max((d["games"] for d in s["daily"]), default=1) or 1
 
     bars = "".join(
@@ -421,12 +547,6 @@ def render(payload: dict[str, Any]) -> str:
         f'<td class="num">{m["logloss"]:.4f}</td><td class="num">{m["auc"]:.3f}</td>'
         f'<td class="num">0.0052</td></tr>'
     )
-    top_rows = "".join(
-        f'<tr><td>{c["name"].title()}</td><td class="num">{c["pick_rate"]*100:.2f}%</td>'
-        f'<td class="num">{c["win_rate"]*100:.1f}%</td>'
-        f'<td class="num">{c["games"]:,}</td></tr>'
-        for c in sorted(chars, key=lambda c: -c["pick_rate"])[:12]
-    )
     day = lambda d: f"{d[:4]}-{d[4:6]}-{d[6:]}" if d else "—"  # noqa: E731
 
     return f"""<!doctype html>
@@ -439,25 +559,37 @@ def render(payload: dict[str, Any]) -> str:
 <div class="wrap">
 
 <h1>Brawl Stars draft agent</h1>
-<p class="sub">Two teams pick three characters each before a match starts. This
-model learned which picks win from {s['games']:,} real ranked games, and runs
-entirely in your browser — try it below.</p>
+<p class="sub">A win-probability model for ranked drafts, trained on
+{s['games']:,} games from season {s['season'].replace('season','')}. It estimates
+which side a completed draft favours, and ranks what to pick next. The model runs
+in your browser, so everything below updates as you change it.</p>
 
 <div class="tiles">
-  <div class="tile"><div class="k">Games learned from</div><div class="v">{s['games']:,}</div></div>
+  <div class="tile"><div class="k">Games trained on</div><div class="v">{s['games']:,}</div></div>
   <div class="tile"><div class="k">Season</div><div class="v">{s['season']}</div></div>
   <div class="tile"><div class="k">Characters</div><div class="v">{len(m and payload['model']['vocab'])}</div></div>
   <div class="tile"><div class="k">Maps</div><div class="v">{len(s['maps'])}</div></div>
   <div class="tile"><div class="k">Model AUC</div><div class="v">{m['auc']:.3f}</div></div>
 </div>
 
-<h2>Mock draft</h2>
+<h2>Draft assistant</h2>
+<p class="note" style="margin:0 0 .9rem;max-width:70ch">Fill either side to see the
+win probability for your team, along with the strongest remaining picks. The
+percentage beside each option is what the draft becomes if you take it. On the
+opponent's turn the ranking inverts — their best pick is the one that costs you
+the most.</p>
 <div class="card">
   <div class="controls">
     <label>Map <select id="map"></select></label>
     <span class="muted" id="mode-label"></span>
-    <label>Skill <input type="range" id="skill" min="-2" max="2" step="0.25" value="0"></label>
-    <span class="muted" id="skill-label">average</span>
+    <label>Lobby skill <input type="range" id="skill" min="-2" max="2" step="0.25" value="0"></label>
+    <span class="muted" id="skill-label"></span>
+    <label>Lookahead <select id="sims">
+      <option value="0">None — score the pick directly</option>
+      <option value="25">25 simulated drafts</option>
+      <option value="100">100 simulated drafts</option>
+      <option value="400">400 simulated drafts</option>
+    </select></label>
     <button id="random">Random draft</button>
     <button id="clear">Clear</button>
   </div>
@@ -472,6 +604,23 @@ entirely in your browser — try it below.</p>
   </div>
   <div id="recs"></div>
 </div>
+<details class="card" style="margin-top:.7rem">
+  <summary style="cursor:pointer;font-weight:600">How the recommendation is made</summary>
+  <p class="note">The model scores a completed draft. To rank a pick that leaves
+  the draft unfinished, the remaining picks have to be filled in somehow.</p>
+  <p class="note"><strong>With lookahead off</strong>, a candidate is scored as the
+  board stands after taking it. This is fast and rewards picks that are strong on
+  their own — including ones that are easily answered.</p>
+  <p class="note"><strong>With lookahead on</strong>, each of the strongest two dozen
+  candidates is played out to a full six-pick draft, repeatedly, with both sides
+  choosing well but not identically each time. The candidate's score becomes the
+  average outcome across those drafts. A pick that looks strong but hands the
+  opponent a good answer loses value here, which is the point of searching at all.</p>
+  <p class="note">Raising the number of simulations makes the ranking steadier and
+  slower. The production system uses the same idea with a proper tree search and
+  thousands of simulations per pick; this is a lighter version that fits in a
+  browser tab.</p>
+</details>
 
 <h2>How the model sees characters</h2>
 <div class="mapwrap">
@@ -482,8 +631,8 @@ entirely in your browser — try it below.</p>
     </select></label>
     <label>Mode <select id="sp-mode"><option value="">All modes</option></select></label>
     <label>Map <select id="sp-map"><option value="">All maps</option></select></label>
-    <label>Skill <input type="range" id="sp-skill" min="-2" max="2" step="0.25" value="0"></label>
-    <span class="muted" id="sp-skill-label">average</span>
+    <label>Lobby skill <input type="range" id="sp-skill" min="-2" max="2" step="0.25" value="0"></label>
+    <span class="muted" id="sp-skill-label"></span>
   </div>
   <canvas id="space"></canvas>
   <div id="tip"></div>
@@ -493,18 +642,43 @@ entirely in your browser — try it below.</p>
     <span id="pca-note"></span>
   </div>
 </div>
-<p class="note"><strong>Position</strong> is how a character interacts — who it works
-beside, who it beats, who beats it — learned only from wins and losses. Nothing told the
-model what a tank or a sniper is, yet they land together.
-<strong>Colour</strong> is how strong it is in the context you choose, and
-<strong>size</strong> is how often it is picked there — those are the parts the map, mode
-and skill controls change.</p>
+<p class="note" style="max-width:70ch"><strong>Position</strong> reflects how a
+character interacts — who it pairs with, who it beats, who beats it. These are the
+model's learned interaction vectors, fitted only from match outcomes; no role or class
+information was provided, so characters landing near each other is something the model
+inferred rather than something it was told.
+<strong>Colour</strong> shows standalone strength in the selected context, and
+<strong>size</strong> shows pick share there. Position is fixed because interaction
+structure is global in this model; the map, mode and skill controls change colour and
+size only.</p>
+
+<h2>Characters this season</h2>
+<div class="card">
+  <div class="controls">
+    <label>Mode <select id="ct-mode"><option value="">All modes</option></select></label>
+    <label>Map <select id="ct-map"><option value="">All maps</option></select></label>
+    <label>Sort <select id="ct-sort">
+      <option value="picks">Times picked</option>
+      <option value="win">Win rate</option>
+      <option value="name">Name</option>
+    </select></label>
+    <button id="ct-dir" data-dir="desc">Descending</button>
+    <span class="muted" id="ct-count"></span>
+  </div>
+  <div class="overflow"><table id="ct-table">
+    <thead><tr><th>Character</th><th class="num">Share of picks</th>
+      <th class="num">Win rate</th><th class="num">Games</th></tr></thead>
+    <tbody id="ct-body"></tbody>
+  </table></div>
+  <p class="note"><button id="ct-more">Show all characters</button></p>
+</div>
 
 <h2>Games collected per day</h2>
 <div class="chart">{bars}</div>
-<p class="note">{day(s['first_day'])} to {day(s['last_day'])} ·
-collected automatically by the
-<a href="https://github.com/elixf7/brawlstars-data-pipeline">companion pipeline</a></p>
+<p class="note">{day(s['first_day'])} to {day(s['last_day'])}. Matches are collected
+on a schedule by a
+<a href="https://github.com/elixf7/brawlstars-data-pipeline">separate pipeline</a> and
+published as a versioned dataset; this model is retrained weekly against it.</p>
 
 <h2>How good is it, really</h2>
 <div class="overflow"><table>
@@ -512,16 +686,15 @@ collected automatically by the
 <th class="num">AUC</th><th class="num">Calibration</th></tr>
 {baseline_rows}
 </table></div>
-<p class="note">Lower log-loss is better; 0.6931 is what you score knowing nothing.
-Counting character-and-map win rates already reaches 0.6794 — so the comparison is
-the result, not the raw number. Measured on {m['n_val']:,} games held out by date.</p>
+<p class="note" style="max-width:70ch">Log-loss penalises confident mistakes; 0.6931
+is the score for predicting 50% every time. Each row knows more than the one above it.
+The comparison matters more than the absolute figure — character-and-map win rates
+alone reach 0.6794, so a model near that number would be adding nothing over a lookup
+table. Calibration measures whether a stated 65% happens 65% of the time, which the
+draft assistant depends on: it combines these probabilities across simulated drafts,
+so systematic overconfidence compounds. Measured on {m['n_val']:,} games held out by
+date, all predictors trained on the same earlier games.</p>
 
-<h2>Most-picked characters</h2>
-<div class="overflow"><table>
-<tr><th>Character</th><th class="num">Pick rate</th><th class="num">Win rate</th>
-<th class="num">Games</th></tr>
-{top_rows}
-</table></div>
 
 <footer>
 Generated {payload['generated_utc'][:16].replace('T', ' ')} UTC from
