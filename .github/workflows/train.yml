@@ -64,7 +64,9 @@ jobs:
 
       - name: Self-play
         if: env.RUN_SELFPLAY == 'true' || inputs.force_selfplay
-        run: uv run bsdraft-train selfplay -c configs/selfplay.toml
+        # Same config as the model above, so self-play loads the evaluator
+        # that was just trained rather than looking in another run directory.
+        run: uv run bsdraft-train selfplay -c "$CONFIG"
 
       - name: Build the dashboard
         run: uv run bsdraft-dashboard -c "$CONFIG" --out site/index.html
