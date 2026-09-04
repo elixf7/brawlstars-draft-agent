@@ -129,39 +129,57 @@ const modeIdx = Object.fromEntries(M.modes.map((m,i)=>[m,i]));
 const stats = Object.fromEntries(D.characters.map(c=>[c.name,c]));
 
 const state = { ally:[null,null,null], enemy:[null,null,null],
-                map: D.season.maps[0], skill: 0, sims: 0 };
+                map: D.season.maps[0], skill: 0, sims: 0, firstPick: true };
 
-/* ---- inference: the same arithmetic as the Python model ---- */
+/* ---- draft order ----
+   Ranked drafts snake: first pick, then two, two, one. Not strict alternation.
+   Blue 1 · Red 1 · Red 2 · Blue 2 · Blue 3 · Red 3 */
+const ORDER_FIRST  = ["ally","enemy","enemy","ally","ally","enemy"];
+const ORDER_SECOND = ["enemy","ally","ally","enemy","enemy","ally"];
+function orderFor(firstPick){ return firstPick ? ORDER_FIRST : ORDER_SECOND; }
+function turnAt(n, firstPick){ return orderFor(firstPick)[n] || null; }
+
+/* ---- inference ----
+   A side is kept as running sums so adding a character costs O(k) instead of
+   rebuilding the team from scratch. Rollouts add and remove characters
+   constantly, so this is what makes thousands of simulations feasible. */
 const dot=(a,b)=>{let s=0;for(let i=0;i<K;i++)s+=a[i]*b[i];return s;};
-const addTo=(acc,row)=>{for(let i=0;i<K;i++)acc[i]+=row[i];};
 
-function ctxVec(){
-  const mi=mapIdx[state.map], mo=modeIdx[D.season.map_modes[state.map]] ?? 0;
+function newSide(){
+  return { lin:0, syn:new Float64Array(K), synSq:0, ctx:new Float64Array(K),
+           att:new Float64Array(K), def:new Float64Array(K), n:0 };
+}
+function addChar(side, b, sign){
+  const i=idx[b], s=sign||1;
+  side.lin += s*M.w[i];
+  const syn=M.e_syn[i], ctx=M.e_ctx[i], att=M.e_att[i], df=M.e_def[i];
+  for(let j=0;j<K;j++){
+    side.syn[j]+=s*syn[j]; side.ctx[j]+=s*ctx[j];
+    side.att[j]+=s*att[j]; side.def[j]+=s*df[j];
+    side.synSq += s*syn[j]*syn[j];
+  }
+  side.n += s;
+  return side;
+}
+function sideValue(side, ctxVec){
+  let s2=0; for(let j=0;j<K;j++) s2+=side.syn[j]*side.syn[j];
+  return side.lin + 0.5*(s2 - side.synSq) + dot(side.ctx, ctxVec);
+}
+function logitOf(A, B, ctxVec){
+  return sideValue(A,ctxVec) - sideValue(B,ctxVec)
+       + dot(A.att,B.def) - dot(B.att,A.def);
+}
+function sideFrom(team){ const s=newSide(); for(const b of team) addChar(s,b,1); return s; }
+
+function ctxVec(skill, mapName){
+  const mi=mapIdx[mapName], mo=modeIdx[D.season.map_modes[mapName]] ?? 0;
   const v=new Float64Array(K);
-  for(let i=0;i<K;i++) v[i]=M.m_map[mi][i]+M.m_mode[mo][i]+M.v_skill[i]*state.skill;
+  for(let i=0;i<K;i++) v[i]=M.m_map[mi][i]+M.m_mode[mo][i]+M.v_skill[i]*skill;
   return v;
 }
-function sideScore(team, ctx){
-  const syn=new Float64Array(K), ctxv=new Float64Array(K);
-  let lin=0, sq=0;
-  for(const b of team){ const i=idx[b];
-    lin+=M.w[i]; addTo(syn,M.e_syn[i]); addTo(ctxv,M.e_ctx[i]);
-    for(let j=0;j<K;j++) sq+=M.e_syn[i][j]*M.e_syn[i][j];
-  }
-  let s2=0; for(let j=0;j<K;j++) s2+=syn[j]*syn[j];
-  return lin + 0.5*(s2-sq) + dot(ctxv,ctx);
-}
-function counter(t1,t2){
-  const a1=new Float64Array(K),d1=new Float64Array(K),
-        a2=new Float64Array(K),d2=new Float64Array(K);
-  for(const b of t1){const i=idx[b];addTo(a1,M.e_att[i]);addTo(d1,M.e_def[i]);}
-  for(const b of t2){const i=idx[b];addTo(a2,M.e_att[i]);addTo(d2,M.e_def[i]);}
-  return dot(a1,d2)-dot(a2,d1);
-}
-function winProb(ally,enemy){
-  const ctx=ctxVec();
-  const z=sideScore(ally,ctx)-sideScore(enemy,ctx)+counter(ally,enemy);
-  return 1/(1+Math.exp(-z));
+function winProb(ally, enemy){
+  const c=ctxVec(state.skill, state.map);
+  return 1/(1+Math.exp(-logitOf(sideFrom(ally), sideFrom(enemy), c)));
 }
 
 /* ---- rendering ---- */
@@ -199,40 +217,44 @@ function update(){
   $("#gauge-cap").textContent = complete
       ? "your team wins" : `your team wins — ${6-a.length-e.length} pick(s) left`;
 
+  const t0=performance.now();
   renderRecs();
+  const ms=Math.round(performance.now()-t0);
+  $("#sim-status").textContent = state.sims>0 ? `${ms} ms` : "";
 }
 
-/* Simulate the rest of the draft.
+/* Play the draft out to the end.
 
-   With sims=0 this is a single-ply evaluation: add the pick, score the board.
-   Above that, each candidate is played out to a full six-pick draft `sims`
-   times. Remaining picks are sampled from the strongest few options for
-   whoever's turn it is — greedy play would give one deterministic line, and
-   uniform random would mostly explore drafts nobody would make.
+   With simulations off this is a single-ply score: take the pick, evaluate the
+   board. Above that each candidate is completed many times, both sides choosing
+   from a small random sample of options rather than always the same best one —
+   a single greedy line would give one deterministic answer, and uniform random
+   would mostly explore drafts nobody would make.
 
-   This is what changes a pick that looks strong alone into one that survives a
-   reply, which is the whole reason the real system searches at all. */
-function rollout(ally, enemy, allyTurnFirst, rng){
-  let a=[...ally], e=[...enemy];
-  const taken=new Set([...a,...e]);
-  const pool=M.vocab.filter(b=>!taken.has(b));
-  let allyTurn=allyTurnFirst;
-  while(a.length+e.length<6){
-    const side = a.length>=3 ? false : (e.length>=3 ? true : allyTurn);
-    // Look at a random subset, take the best of it: cheap, and keeps lines varied.
-    let best=null, bestv=side?-1:2;
-    for(let t=0;t<6;t++){
+   That is what separates a pick which is strong on its own from one which
+   survives the reply. */
+function rollout(A, B, taken, pool, startIdx, ctxV, firstPick, rng, tries){
+  const added=[];
+  for(let n=startIdx; n<6; n++){
+    const side = turnAt(n, firstPick);
+    const forA = side==="ally";
+    const cur = forA ? A : B;
+    if(cur.n>=3) continue;
+    let best=null, bestv=forA?-Infinity:Infinity;
+    for(let t=0;t<tries;t++){
       const c=pool[(rng()*pool.length)|0];
       if(!c || taken.has(c)) continue;
-      const v = side ? winProb([...a,c],e) : winProb(a,[...e,c]);
-      if(side ? v>bestv : v<bestv){ bestv=v; best=c; }
+      addChar(cur,c,1);
+      const v=logitOf(A,B,ctxV);
+      addChar(cur,c,-1);
+      if(forA ? v>bestv : v<bestv){ bestv=v; best=c; }
     }
-    if(!best) break;
-    taken.add(best);
-    if(side) a.push(best); else e.push(best);
-    allyTurn=!allyTurn;
+    if(best===null) continue;
+    taken.add(best); addChar(cur,best,1); added.push([cur,best]);
   }
-  return winProb(a,e);
+  const p = 1/(1+Math.exp(-logitOf(A,B,ctxV)));
+  for(const [side,b] of added){ addChar(side,b,-1); taken.delete(b); }
+  return p;
 }
 function mulberry(seed){ return ()=>{ seed|=0; seed=seed+0x6D2B79F5|0;
   let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t;
@@ -245,29 +267,37 @@ function renderRecs(){
     host.innerHTML = `<p class="note">Draft complete — remove a pick to compare alternatives.</p>`;
     return;
   }
-  const forAlly = a.length <= e.length;
+  const picked = a.length + e.length;
+  const side = turnAt(picked, state.firstPick);
+  const forAlly = side==="ally";
   const base = (a.length||e.length) ? winProb(a,e) : 0.5;
   const taken = new Set([...a,...e]);
   const sims = state.sims;
+  const ctxV = ctxVec(state.skill, state.map);
 
   // Shortlist on the immediate value, then spend the simulations on those.
+  const A=sideFrom(a), B=sideFrom(e);
+  const cur = forAlly ? A : B;
   let scored=[];
   for(const b of M.vocab){
     if(taken.has(b)) continue;
-    const p = forAlly ? winProb([...a,b],e) : winProb(a,[...e,b]);
-    scored.push({b, p});
+    addChar(cur,b,1);
+    scored.push({b, p:1/(1+Math.exp(-logitOf(A,B,ctxV)))});
+    addChar(cur,b,-1);
   }
   scored.sort((x,y)=> forAlly ? y.p-x.p : x.p-y.p);
 
   if(sims>0){
-    const shortlist=scored.slice(0,24);
+    const shortlist=scored.slice(0,16);
     const rng=mulberry(12345);
+    const pool=M.vocab.filter(b=>!taken.has(b));
     for(const c of shortlist){
-      const na = forAlly ? [...a,c.b] : a;
-      const ne = forAlly ? e : [...e,c.b];
+      taken.add(c.b); addChar(cur,c.b,1);
       let acc=0;
-      for(let i=0;i<sims;i++) acc+=rollout(na,ne,!forAlly,rng);
-      c.p = acc/sims;
+      for(let i=0;i<sims;i++)
+        acc+=rollout(A,B,taken,pool,picked+1,ctxV,state.firstPick,rng,4);
+      c.p=acc/sims;
+      addChar(cur,c.b,-1); taken.delete(c.b);
     }
     shortlist.sort((x,y)=> forAlly ? y.p-x.p : x.p-y.p);
     scored=shortlist;
@@ -275,16 +305,16 @@ function renderRecs(){
   scored.forEach(c=>{ c.d=(forAlly?c.p:1-c.p)-(forAlly?base:1-base); });
   const top=scored.slice(0,8);
   const how = state.sims>0
-    ? `each option played out to a full draft ${state.sims}×`
+    ? `each option played out to a full draft ${state.sims.toLocaleString()}×`
     : `scored immediately, without looking ahead`;
-  host.innerHTML = `<p class="note">Best next pick for
+  host.innerHTML = `<p class="note">Pick ${picked+1} of 6 belongs to
     <strong>${forAlly?"your team":"the opponent"}</strong> — ${how}.</p><div class="recs">` +
     top.map(r=>`<div class="rec" data-b="${r.b}" data-side="${forAlly?"ally":"enemy"}">
       <span class="n">${pretty(r.b)}</span>
       <span class="d ${r.d>=0?"up":"down"}">${(r.p*100).toFixed(1)}%</span></div>`).join("")+"</div>";
   host.querySelectorAll(".rec").forEach(el=>el.onclick=()=>{
-    const side=el.dataset.side, i=state[side].indexOf(null);
-    if(i>=0){ state[side][i]=el.dataset.b; update(); }
+    const sd=el.dataset.side, i=state[sd].indexOf(null);
+    if(i>=0){ state[sd][i]=el.dataset.b; update(); }
   });
 }
 
@@ -433,18 +463,27 @@ function spaceHover(e){
 }
 
 /* ---- characters table ---- */
-const CT = { mode:"", map:"", sort:"picks", dir:"desc", expanded:false };
+const CT = { mode:"", map:"", band:"", sort:"picks", dir:"desc", expanded:false };
 
-function ctRows(){
+/* Appearances and wins for a character under the current filters, summed over
+   whichever mode/band cells are in scope. Rates are recomputed rather than
+   inherited, so a filtered view never shows a season-wide figure. */
+function ctTally(c){
   const mode = CT.map ? D.season.map_modes[CT.map] : CT.mode;
-  let rows = D.characters.filter(c => !mode || (c.by_mode||{})[mode]);
-  let total = 1;
-  if(mode){ total = rows.reduce((t,c)=>t+((c.by_mode||{})[mode]||0),0) || 1; }
-  rows = rows.map(c=>{
-    const games = mode ? (c.by_mode||{})[mode] : c.games;
-    return {name:c.name, games, share: mode ? games/total : c.pick_rate,
-            win: c.win_rate};
-  });
+  let games=0, wins=0;
+  for(const [key,[n,w]] of Object.entries(c.cells||{})){
+    const [m,b] = key.split("|");
+    if(mode && m!==mode) continue;
+    if(CT.band && b!==CT.band) continue;
+    games+=n; wins+=w;
+  }
+  return {games, wins};
+}
+function ctRows(){
+  let rows = D.characters.map(c=>({c, ...ctTally(c)})).filter(r=>r.games>0);
+  const total = rows.reduce((t,r)=>t+r.games,0) || 1;
+  rows = rows.map(r=>({ name:r.c.name, games:r.games,
+                        share:r.games/total, win:r.games?r.wins/r.games:0 }));
   const key = CT.sort==="win" ? (r=>r.win) : CT.sort==="name" ? (r=>r.name) : (r=>r.games);
   rows.sort((a,b)=>{
     const x=key(a), y=key(b);
@@ -461,7 +500,9 @@ function renderTable(){
      <td class="num">${(r.win*100).toFixed(1)}%</td>
      <td class="num">${r.games.toLocaleString()}</td></tr>`).join("");
   const mode = CT.map ? D.season.map_modes[CT.map] : CT.mode;
-  $("#ct-count").textContent = `${rows.length} characters${mode?" in "+mode:""}`;
+  const scope = [mode, CT.band && CT.band+" of lobbies"].filter(Boolean).join(", ");
+  $("#ct-count").textContent =
+    `${rows.length} characters${scope?" · "+scope:""}`;
   $("#ct-more").textContent = CT.expanded
     ? "Show fewer" : `Show all ${rows.length} characters`;
 }
@@ -481,6 +522,7 @@ function init(){
 
   const simSel=$("#sims");
   simSel.onchange=()=>{state.sims=parseInt(simSel.value,10); update();};
+  $("#firstpick").onchange=e=>{state.firstPick = e.target.value==="1"; update();};
 
   $("#clear").onclick=()=>{state.ally=[null,null,null];state.enemy=[null,null,null];update();};
   $("#random").onclick=()=>{
@@ -497,6 +539,9 @@ function init(){
     D.season.maps.map(m=>`<option>${m}</option>`).join("");
   $("#ct-mode").onchange=e=>{CT.mode=e.target.value; if(CT.mode){CT.map="";$("#ct-map").value="";} renderTable();};
   $("#ct-map").onchange=e=>{CT.map=e.target.value; if(CT.map){CT.mode="";$("#ct-mode").value="";} renderTable();};
+  $("#ct-band").innerHTML='<option value="">All lobbies</option>'+
+    D.season.skill_bands.map(b=>`<option value="${b}">${b} of lobbies</option>`).join("");
+  $("#ct-band").onchange=e=>{CT.band=e.target.value; renderTable();};
   $("#ct-sort").onchange=e=>{CT.sort=e.target.value; renderTable();};
   $("#ct-dir").onclick=e=>{CT.dir = CT.dir==="desc"?"asc":"desc";
     e.target.textContent = CT.dir==="desc"?"Descending":"Ascending"; renderTable();};
@@ -584,12 +629,18 @@ the most.</p>
     <span class="muted" id="mode-label"></span>
     <label>Lobby skill <input type="range" id="skill" min="-2" max="2" step="0.25" value="0"></label>
     <span class="muted" id="skill-label"></span>
+    <label>First pick <select id="firstpick">
+      <option value="1">Your team</option>
+      <option value="0">Opponent</option>
+    </select></label>
     <label>Lookahead <select id="sims">
       <option value="0">None — score the pick directly</option>
-      <option value="25">25 simulated drafts</option>
-      <option value="100">100 simulated drafts</option>
-      <option value="400">400 simulated drafts</option>
+      <option value="500">500 simulated drafts</option>
+      <option value="2000">2,000 simulated drafts</option>
+      <option value="8000">8,000 simulated drafts</option>
+      <option value="20000">20,000 simulated drafts (slow)</option>
     </select></label>
+    <span class="muted" id="sim-status"></span>
     <button id="random">Random draft</button>
     <button id="clear">Clear</button>
   </div>
@@ -657,6 +708,7 @@ size only.</p>
   <div class="controls">
     <label>Mode <select id="ct-mode"><option value="">All modes</option></select></label>
     <label>Map <select id="ct-map"><option value="">All maps</option></select></label>
+    <label>Skill band <select id="ct-band"><option value="">All lobbies</option></select></label>
     <label>Sort <select id="ct-sort">
       <option value="picks">Times picked</option>
       <option value="win">Win rate</option>

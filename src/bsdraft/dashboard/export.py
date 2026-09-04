@@ -112,6 +112,21 @@ def _map_modes(df: pd.DataFrame) -> dict[str, str]:
     return {str(r.map): str(r.mode) for r in pairs.itertuples()}
 
 
+#: Skill bands, as percentiles of the season's lobbies. Three is enough to see
+#: a trend without splitting the data so thin the rates stop meaning anything.
+SKILL_BANDS = ((0.0, 1 / 3, "lower third"), (1 / 3, 2 / 3, "middle third"),
+               (2 / 3, 1.0, "upper third"))
+
+
+def _skill_band(df: pd.DataFrame) -> pd.Series:
+    """Label each game by which third of the skill distribution it sits in."""
+    ranks = df["skill_ns"].rank(pct=True, method="average")
+    band = pd.Series("middle third", index=df.index)
+    band[ranks <= 1 / 3] = "lower third"
+    band[ranks > 2 / 3] = "upper third"
+    return band
+
+
 def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
     """Pick rate and win rate per character, from the season's games."""
     frames = []
@@ -123,15 +138,29 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
     grouped = stacked.groupby("name")["won"].agg(["sum", "count"])
     grouped = grouped[grouped["count"] >= min_games]
 
-    # Per-mode appearances, so the page can filter to characters that actually
-    # see play in the selected mode.
-    per_mode = {}
-    for cols, _ in ((TEAM1_BRAWLER_COLS, None), (TEAM2_BRAWLER_COLS, None)):
+    # Appearances and wins broken down by mode and skill band, so the page can
+    # filter on either and recompute rates rather than showing a season-wide
+    # figure that ignores the filter.
+    band = _skill_band(df)
+    cells: dict[str, dict[str, list[int]]] = {}
+    for cols, won in ((TEAM1_BRAWLER_COLS, df["team1_wins"]),
+                      (TEAM2_BRAWLER_COLS, 1 - df["team1_wins"])):
         for c in cols:
-            sub = df[[c, "mode"]].dropna()
-            for (name, mode), n in sub.groupby([c, "mode"]).size().items():
-                per_mode.setdefault(name, {}).setdefault(mode, 0)
-                per_mode[name][mode] += int(n)
+            sub = pd.DataFrame({"name": df[c], "mode": df["mode"],
+                                "band": band, "won": won}).dropna(subset=["name"])
+            agg = sub.groupby(["name", "mode", "band"])["won"].agg(["sum", "count"])
+            for (name, mode, bnd), row in agg.iterrows():
+                key = f"{mode}|{bnd}"
+                slot = cells.setdefault(name, {}).setdefault(key, [0, 0])
+                slot[0] += int(row["count"])
+                slot[1] += int(row["sum"])
+
+    per_mode = {}
+    for name, by_key in cells.items():
+        for key, (n, _) in by_key.items():
+            mode = key.split("|")[0]
+            per_mode.setdefault(name, {}).setdefault(mode, 0)
+            per_mode[name][mode] += n
 
     total_slots = len(df) * 6
     out = [
@@ -141,6 +170,8 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
             "pick_rate": round(float(row["count"]) / total_slots, 5),
             "win_rate": round(float(row["sum"]) / float(row["count"]), 4),
             "by_mode": per_mode.get(name, {}),
+            # "mode|band" -> [appearances, wins]
+            "cells": cells.get(name, {}),
         }
         for name, row in grouped.iterrows()
     ]
@@ -162,6 +193,7 @@ def season_stats(df: pd.DataFrame, season: str, dataset: str) -> dict[str, Any]:
         "team1_win_rate": round(float(df["team1_wins"].mean()), 4),
         "daily": [{"day": d, "games": int(n)} for d, n in daily.items()],
         "map_modes": _map_modes(df),
+        "skill_bands": [b[2] for b in SKILL_BANDS],
     }
 
 
