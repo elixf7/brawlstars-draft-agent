@@ -25,6 +25,12 @@ def main() -> None:
         else:
             print(push_registry(args.repo_id, args.path))
     except SyncError as e:
+        # History is useful, not essential. With --allow-missing the caller has
+        # said it can proceed without it, and training should not be blocked by
+        # a missing credential.
+        if args.allow_missing:
+            print(f"note: {e} — continuing without stored history")
+            return
         raise SystemExit(f"error: {e}") from None
 
 

@@ -78,8 +78,10 @@ jobs:
         # that was just trained rather than looking in another run directory.
         run: uv run bsdraft-train selfplay -c "$CONFIG"
 
+      # Observability, not the job: a missing HF_TOKEN should not fail training.
       - name: Store the run registry
         if: always() && hashFiles('runs/registry.db') != ''
+        continue-on-error: true
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: uv run bsdraft-registry push --repo-id "$DATASET_REPO" --path runs/registry.db
