@@ -210,12 +210,61 @@ BASELINES = [
 ]
 
 
+def training_history(store_path: str | Path, limit: int = 10) -> list[dict]:
+    """Recent training runs, so the page can answer what happened this week.
+
+    Reads whatever the registry holds; an absent or unreadable registry yields
+    an empty list rather than breaking the build.
+    """
+    try:
+        from bsdraft.tracking import RunStore
+
+        if not Path(store_path).exists():
+            return []
+        store = RunStore(store_path)
+    except Exception:
+        return []
+
+    out = []
+    for run in store.list_runs(limit=limit * 3):
+        full = store.get_run(run["run_id"])
+        if full is None:
+            continue
+        m = full.get("metrics", {})
+        row = {
+            "run_id": run["run_id"],
+            "stage": run["stage"],
+            "status": run["status"],
+            "started": (run["started_utc"] or "")[:16].replace("T", " "),
+            "seed": run["seed"],
+            "elapsed": run["elapsed_seconds"],
+        }
+        if run["stage"] == "fm":
+            row |= {"logloss": m.get("val_logloss"), "auc": m.get("val_auc")}
+        elif run["stage"] == "selfplay":
+            wp = m.get("final_eval_win_prob") or m.get("eval_win_prob")
+            row |= {"win_prob": wp,
+                    "promoted": bool(m.get("final_promoted") or m.get("promoted"))}
+        elif run["stage"] == "eval":
+            best = min(
+                ((k.rsplit(".", 1)[0], v) for k, v in m.items() if k.endswith(".logloss")),
+                key=lambda kv: kv[1], default=None,
+            )
+            row |= {"best_predictor": best[0] if best else None,
+                    "logloss": best[1] if best else None}
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def build_payload(
     model: FFMInference, df: pd.DataFrame, *, season: str, dataset: str,
-    generated_utc: str,
+    generated_utc: str, registry_path: str | Path | None = None,
 ) -> dict[str, Any]:
     return {
         "generated_utc": generated_utc,
+        "runs": training_history(registry_path) if registry_path else [],
         "model": serialise_model(model),
         "embedding": embed_characters(model),
         "season": season_stats(df, season, dataset),

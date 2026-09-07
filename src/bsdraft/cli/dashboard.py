@@ -38,6 +38,7 @@ def main() -> None:
     payload = build_payload(
         model, df, season=cfg.data.season, dataset=str(source),
         generated_utc=datetime.now(tz=UTC).isoformat(),
+        registry_path=cfg.run_dir.parent / "registry.db",
     )
     out = write_dashboard(payload, args.out)
     print(f"{out}  ({out.stat().st_size / 1024:.0f} KB)")

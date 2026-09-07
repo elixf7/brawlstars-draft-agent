@@ -26,6 +26,7 @@ bsdraft-train = "bsdraft.cli.train:main"
 bsdraft-runs = "bsdraft.cli.runs:main"
 bsdraft-eval = "bsdraft.cli.evaluate:main"
 bsdraft-dashboard = "bsdraft.cli.dashboard:main"
+bsdraft-registry = "bsdraft.cli.registry:main"
 
 [project.urls]
 Repository = "https://github.com/elixf7/brawlstars-draft-agent"

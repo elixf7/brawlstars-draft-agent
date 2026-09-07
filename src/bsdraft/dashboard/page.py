@@ -95,6 +95,10 @@ th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mut
 tr:last-child td{border-bottom:0}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 tr.highlight td{background:var(--accent-soft);font-weight:600}
+.pill{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.7rem;
+ font-weight:650;text-transform:uppercase;letter-spacing:.03em}
+.pill.ok{background:var(--win-soft);color:var(--win)}
+.pill.fail{background:var(--lose-soft);color:var(--lose)}
 .chart{display:flex;align-items:flex-end;gap:2px;height:96px;background:var(--surface);
  border:1px solid var(--line);border-radius:10px;padding:.7rem}
 .chart i{flex:1;background:var(--accent);border-radius:2px 2px 0 0;opacity:.85;min-height:2px}
@@ -582,6 +586,39 @@ def render(payload: dict[str, Any]) -> str:
         f'title="{d["day"][:4]}-{d["day"][4:6]}-{d["day"][6:]}: {d["games"]:,} games"></i>'
         for d in s["daily"]
     )
+    runs = payload.get("runs") or []
+    if runs:
+        def cell(v, fmt="{:.4f}"):
+            return "—" if v is None else (fmt.format(v) if isinstance(v, float) else str(v))
+        run_rows = "".join(
+            f'<tr><td>{r["started"]}</td>'
+            f'<td><code>{r["stage"]}</code></td>'
+            f'<td><span class="pill {"ok" if r["status"] == "ok" else "fail"}">'
+            f'{r["status"]}</span></td>'
+            f'<td class="num">{cell(r.get("logloss"))}</td>'
+            f'<td class="num">{cell(r.get("auc"), "{:.3f}")}</td>'
+            f'<td>{"promoted" if r.get("promoted") else ("rejected" if r.get("win_prob") is not None else "")}'
+            f'{" " + cell(r.get("win_prob"), "{:.4f}") if r.get("win_prob") is not None else ""}</td>'
+            f'<td class="num">{cell(r.get("elapsed"), "{:.0f}")}s</td></tr>'
+            for r in runs
+        )
+        runs_block = (
+            '<div class="overflow"><table>'
+            '<tr><th>Started (UTC)</th><th>Stage</th><th>Result</th>'
+            '<th class="num">Log-loss</th><th class="num">AUC</th>'
+            '<th>Policy</th><th class="num">Took</th></tr>'
+            + run_rows + "</table></div>"
+            '<p class="note" style="max-width:70ch">Every training run is recorded here: '
+            'the model is retrained weekly, and self-play runs in weeks 2 and 4 of a season. '
+            'A run only publishes if it beats every count-based baseline on at least '
+            '100,000 training games, so a model that would be worse than a lookup table '
+            'never replaces the one in use. A rejected policy means self-play did not '
+            'improve on the previous one and the previous one was kept.</p>'
+        )
+    else:
+        runs_block = ('<p class="note">No training history recorded yet — the registry '
+                      'is stored alongside the dataset and fills in as runs accumulate.</p>')
+
     baseline_rows = "".join(
         f'<tr><td>{b["name"]}</td><td class="muted">{b["knows"]}</td>'
         f'<td class="num">{b["logloss"]:.4f}</td><td class="num">{b["auc"]:.3f}</td>'
@@ -724,6 +761,9 @@ size only.</p>
   </table></div>
   <p class="note"><button id="ct-more">Show all characters</button></p>
 </div>
+
+<h2>Pipeline</h2>
+{runs_block}
 
 <h2>Games collected per day</h2>
 <div class="chart">{bars}</div>
