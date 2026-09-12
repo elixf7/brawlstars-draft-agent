@@ -133,7 +133,7 @@ const modeIdx = Object.fromEntries(M.modes.map((m,i)=>[m,i]));
 const stats = Object.fromEntries(D.characters.map(c=>[c.name,c]));
 
 const state = { ally:[null,null,null], enemy:[null,null,null],
-                map: D.season.maps[0], skill: 0, sims: 0, firstPick: true };
+                map: D.season.maps[0], skill: 0, sims: 500, firstPick: true };
 
 /* ---- draft order ----
    Ranked drafts snake: first pick, then two, two, one. Not strict alternation.
@@ -370,6 +370,61 @@ function skillLabel(z){
 /* ---- character map ---- */
 const SP = { layout:"tsne", mode:"", map:"", skill:0, hot:null, pts:[] };
 
+/* Each character's `grid` holds [appearances, wins] for every (map, band) pair,
+   in D.season.maps x D.season.skill_bands order. Every view on this page is a
+   sum over some rectangle of it, so map, mode and lobby skill all change the
+   numbers rather than only the colours. */
+const NB = D.season.skill_bands.length;
+const ALL_BANDS = [...Array(NB).keys()];
+const mapIx = Object.fromEntries(D.season.maps.map((m,i)=>[m,i]));
+const mapsByMode = {};
+for(const m of D.season.maps){ (mapsByMode[D.season.map_modes[m]] ||= []).push(m); }
+
+/* The slider is continuous but the bands are equal slices of the season, so a
+   position maps to a band through the percentile it represents. */
+function bandOf(z){ return Math.min(NB-1, Math.floor(normalCdf(z)*NB)); }
+
+function gridSum(c, mapNames, bands){
+  let n=0, w=0; const g=c&&c.grid;
+  if(!g) return {n,w};
+  for(const mp of mapNames){
+    const mi=mapIx[mp]; if(mi===undefined) continue;
+    for(const b of bands){ const at=(mi*NB+b)*2; n+=g[at]; w+=g[at+1]; }
+  }
+  return {n,w};
+}
+
+/* A slice is the set of cells the current filters select, plus a label saying
+   what it is. Sizes and rates on the map are all read off the same slice, so
+   the denominators agree. */
+function currentSlice(){
+  const band = bandOf(SP.skill), bandName = D.season.skill_bands[band];
+  if(SP.map)  return {maps:[SP.map], bands:[band],
+                      label:`${SP.map} · ${bandName} lobbies`};
+  if(SP.mode) return {maps:mapsByMode[SP.mode]||[], bands:[band],
+                      label:`${SP.mode} · ${bandName} lobbies`};
+  return {maps:D.season.maps, bands:[band], label:`${bandName} lobbies`};
+}
+
+/* Widen the slice until there is enough of it to quote a win rate from. A rate
+   off 40 appearances is noise dressed as a statistic; below this floor the
+   honest move is to answer a broader question and say that is what happened. */
+const MIN_SLICE = 250;
+function widenFrom(c, slice){
+  const mode = SP.map ? D.season.map_modes[SP.map] : SP.mode;
+  const steps = [[slice.maps, slice.bands, slice.label]];
+  if(SP.map && mode) steps.push([mapsByMode[mode]||[], slice.bands,
+      `${mode} · ${D.season.skill_bands[slice.bands[0]]} lobbies`]);
+  if(mode) steps.push([mapsByMode[mode]||[], ALL_BANDS, `${mode}, all lobbies`]);
+  steps.push([D.season.maps, ALL_BANDS, "the whole season"]);
+  for(const [mps,bds,label] of steps){
+    const {n,w} = gridSum(c,mps,bds);
+    if(n >= MIN_SLICE) return {n,w,label,widened:label!==slice.label};
+  }
+  const {n,w} = gridSum(c,D.season.maps,ALL_BANDS);
+  return {n,w,label:"the whole season",widened:true};
+}
+
 function strengthOf(b, ctx){          // the model's view of a character alone
   const i=idx[b]; let s=M.w[i];
   for(let j=0;j<K;j++) s+=M.e_ctx[i][j]*ctx[j];
@@ -385,26 +440,16 @@ function spCtx(){
   return v;
 }
 function selectedMode(){ return SP.map ? D.season.map_modes[SP.map] : SP.mode; }
+
+/* Which characters are drawn is decided by the map or mode alone, never by the
+   skill band: points appearing and vanishing as the slider moves would read as
+   a glitch. The band changes how big they are, not whether they exist. */
 function visibleChars(){
-  const mode=selectedMode();
+  const scope = SP.map ? [SP.map] : SP.mode ? (mapsByMode[SP.mode]||[]) : D.season.maps;
   return M.vocab.filter(b=>{
     const st=stats[b]; if(!st) return false;
-    return !mode || (st.by_mode||{})[mode];
+    return gridSum(st, scope, ALL_BANDS).n > 0;
   });
-}
-/* Dot size is how often a character is picked *in the selected mode*, so the
-   mode control changes what the map emphasises and not only its colour. */
-function pickShare(b){
-  const st=stats[b], mode=selectedMode();
-  if(!mode) return st.pick_rate;
-  const n=(st.by_mode||{})[mode]||0;
-  return n / (SP._modeTotal||1);
-}
-function modeTotal(){
-  const mode=selectedMode();
-  if(!mode) return 1;
-  let t=0; for(const b of M.vocab){ const st=stats[b]; if(st) t+=(st.by_mode||{})[mode]||0; }
-  return t||1;
 }
 function drawSpace(){
   const cv=$("#space"), dpr=window.devicePixelRatio||1;
@@ -413,10 +458,15 @@ function drawSpace(){
   const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
 
   const coords=D.embedding[SP.layout], ctx=spCtx(), shown=visibleChars();
+  const slice=currentSlice();
+  SP.slice=slice;
+  // One denominator for the whole chart, so the sizes are comparable.
+  SP.counts=Object.fromEntries(shown.map(b=>[b, gridSum(stats[b],slice.maps,slice.bands).n]));
+  const total=Object.values(SP.counts).reduce((t,n)=>t+n,0)||1;
+  SP.share=b=>(SP.counts[b]||0)/total;
   const vals=shown.map(b=>strengthOf(b,ctx));
   const lo=Math.min(...vals), hi=Math.max(...vals), span=(hi-lo)||1;
-  SP._modeTotal=modeTotal();
-  const maxPick=Math.max(...shown.map(pickShare));
+  const maxShare=Math.max(...shown.map(SP.share))||1;
   const pad=26;
   SP.pts=[];
   const css=getComputedStyle(document.body);
@@ -427,7 +477,7 @@ function drawSpace(){
     const i=M.vocab.indexOf(b), c=coords[i];
     const x=pad+c[0]*(w-2*pad), y=pad+(1-c[1])*(h-2*pad);
     const t=(strengthOf(b,ctx)-lo)/span;
-    const r=4+8*Math.sqrt(pickShare(b)/maxPick);
+    const r=4+8*Math.sqrt(SP.share(b)/maxShare);
     g.beginPath(); g.arc(x,y,r,0,6.284);
     g.fillStyle = t>0.5 ? mixHex(mid,win,(t-0.5)*2) : mixHex(lose,mid,t*2);
     g.fill();
@@ -437,11 +487,12 @@ function drawSpace(){
   // Label only the most-picked, so the map stays readable.
   g.font="11px ui-sans-serif,system-ui,sans-serif";
   g.fillStyle=css.getPropertyValue("--ink-2").trim();
-  [...SP.pts].sort((a,c)=>pickShare(c.b)-pickShare(a.b)).slice(0,14)
+  [...SP.pts].sort((a,c)=>SP.share(c.b)-SP.share(a.b)).slice(0,14)
     .forEach(p=>g.fillText(pretty(p.b), p.x+p.r+3, p.y+3));
-  $("#pca-note").textContent = SP.layout==="pca"
-    ? `PCA shows ${(D.embedding.pca_variance*100).toFixed(0)}% of the variation`
-    : `${shown.length} characters${selectedMode()?" · sized by picks in "+selectedMode():""}`;
+  const variance = SP.layout==="pca"
+    ? `PCA shows ${(D.embedding.pca_variance*100).toFixed(0)}% of the variation · ` : "";
+  $("#pca-note").textContent =
+    `${variance}${shown.length} characters · sized by picks in ${slice.label}`;
 }
 function mixHex(a,b,t){
   const p=h=>{h=h.replace("#","");return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));};
@@ -456,9 +507,14 @@ function spaceHover(e){
   const tip=$("#tip");
   if(best && bd < (best.r+9)**2){
     const st=stats[best.b], nb=(D.embedding.neighbours[best.b]||[]).slice(0,3);
-    const mode=selectedMode();
+    const slice=SP.slice, picked=SP.share(best.b);
+    const wr=widenFrom(st,slice);
+    const note = wr.widened
+      ? `${(wr.n).toLocaleString()} games in ${wr.label} — too few here to say`
+      : `${wr.n.toLocaleString()} games in ${slice.label}`;
     tip.innerHTML=`<b>${pretty(best.b)}</b>
-      ${(st.win_rate*100).toFixed(1)}% win · ${(pickShare(best.b)*100).toFixed(2)}% picked${mode?" in "+mode:""}
+      ${(wr.w/wr.n*100).toFixed(1)}% win · ${(picked*100).toFixed(2)}% of picks
+      <div class="nb">${note}</div>
       <div class="nb">plays most like: ${nb.map(pretty).join(", ")}</div>`;
     tip.style.opacity=1;
     tip.style.left=Math.min(best.x+14, r.width-240)+"px";
@@ -469,19 +525,17 @@ function spaceHover(e){
 /* ---- characters table ---- */
 const CT = { mode:"", map:"", band:"", sort:"picks", dir:"desc", expanded:false };
 
-/* Appearances and wins for a character under the current filters, summed over
-   whichever mode/band cells are in scope. Rates are recomputed rather than
-   inherited, so a filtered view never shows a season-wide figure. */
+/* Appearances and wins for a character under the current filters, summed out of
+   the same (map, band) grid the character map reads. Rates are recomputed
+   rather than inherited, so a filtered view never shows a season-wide figure —
+   and picking a map now means that map, not the mode it belongs to. */
 function ctTally(c){
-  const mode = CT.map ? D.season.map_modes[CT.map] : CT.mode;
-  let games=0, wins=0;
-  for(const [key,[n,w]] of Object.entries(c.cells||{})){
-    const [m,b] = key.split("|");
-    if(mode && m!==mode) continue;
-    if(CT.band && b!==CT.band) continue;
-    games+=n; wins+=w;
-  }
-  return {games, wins};
+  const maps = CT.map ? [CT.map]
+             : CT.mode ? (mapsByMode[CT.mode]||[])
+             : D.season.maps;
+  const bands = CT.band==="" ? ALL_BANDS : [parseInt(CT.band,10)];
+  const {n,w} = gridSum(c, maps, bands);
+  return {games:n, wins:w};
 }
 function ctRows(){
   let rows = D.characters.map(c=>({c, ...ctTally(c)})).filter(r=>r.games>0);
@@ -503,8 +557,9 @@ function renderTable(){
     `<tr><td>${pretty(r.name)}</td><td class="num">${(r.share*100).toFixed(2)}%</td>
      <td class="num">${(r.win*100).toFixed(1)}%</td>
      <td class="num">${r.games.toLocaleString()}</td></tr>`).join("");
-  const mode = CT.map ? D.season.map_modes[CT.map] : CT.mode;
-  const scope = [mode, CT.band && CT.band+" of lobbies"].filter(Boolean).join(", ");
+  const where = CT.map || CT.mode;
+  const scope = [where, CT.band!=="" && D.season.skill_bands[CT.band]+" of lobbies"]
+                  .filter(Boolean).join(", ");
   $("#ct-count").textContent =
     `${rows.length} characters${scope?" · "+scope:""}`;
   $("#ct-more").textContent = CT.expanded
@@ -525,6 +580,7 @@ function init(){
   $("#skill-label").textContent=skillLabel(0);
 
   const simSel=$("#sims");
+  simSel.value=String(state.sims);   // the control follows the state, not the markup
   simSel.onchange=()=>{state.sims=parseInt(simSel.value,10); update();};
   $("#firstpick").onchange=e=>{state.firstPick = e.target.value==="1"; update();};
 
@@ -544,7 +600,7 @@ function init(){
   $("#ct-mode").onchange=e=>{CT.mode=e.target.value; if(CT.mode){CT.map="";$("#ct-map").value="";} renderTable();};
   $("#ct-map").onchange=e=>{CT.map=e.target.value; if(CT.map){CT.mode="";$("#ct-mode").value="";} renderTable();};
   $("#ct-band").innerHTML='<option value="">All lobbies</option>'+
-    D.season.skill_bands.map(b=>`<option value="${b}">${b} of lobbies</option>`).join("");
+    D.season.skill_bands.map((b,i)=>`<option value="${i}">${b} of lobbies</option>`).join("");
   $("#ct-band").onchange=e=>{CT.band=e.target.value; renderTable();};
   $("#ct-sort").onchange=e=>{CT.sort=e.target.value; renderTable();};
   $("#ct-dir").onclick=e=>{CT.dir = CT.dir==="desc"?"asc":"desc";

@@ -112,23 +112,42 @@ def _map_modes(df: pd.DataFrame) -> dict[str, str]:
     return {str(r.map): str(r.mode) for r in pairs.itertuples()}
 
 
-#: Skill bands, as percentiles of the season's lobbies. Three is enough to see
-#: a trend without splitting the data so thin the rates stop meaning anything.
-SKILL_BANDS = ((0.0, 1 / 3, "lower third"), (1 / 3, 2 / 3, "middle third"),
-               (2 / 3, 1.0, "upper third"))
+#: Skill bands, as equal slices of the season's lobbies. Five rather than three
+#: so the page's skill slider crosses a boundary four times instead of twice —
+#: with three, most of the slider's travel changed nothing a reader could see.
+SKILL_BAND_LABELS = ("bottom 20%", "20-40%", "40-60%", "60-80%", "top 20%")
+N_SKILL_BANDS = len(SKILL_BAND_LABELS)
 
 
-def _skill_band(df: pd.DataFrame) -> pd.Series:
-    """Label each game by which third of the skill distribution it sits in."""
+def _skill_band(df: pd.DataFrame, n_bands: int = N_SKILL_BANDS) -> pd.Series:
+    """Which equal slice of the skill distribution each game sits in, 0-indexed."""
     ranks = df["skill_ns"].rank(pct=True, method="average")
-    band = pd.Series("middle third", index=df.index)
-    band[ranks <= 1 / 3] = "lower third"
-    band[ranks > 2 / 3] = "upper third"
-    return band
+    return np.minimum((ranks * n_bands).astype(int), n_bands - 1)
+
+
+def season_maps(df: pd.DataFrame) -> list[str]:
+    """The map order everything else indexes against.
+
+    The per-character grid is positional, so the page can only read it if it
+    agrees with this list exactly. One definition, used by both.
+    """
+    return sorted(df["map"].dropna().unique().tolist())
 
 
 def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
-    """Pick rate and win rate per character, from the season's games."""
+    """Pick rate and win rate per character, sliced by map and lobby skill.
+
+    Each character carries a positional `grid`: for every (map, skill band) pair
+    in `season_maps(df)` x `SKILL_BAND_LABELS` order, the appearances and wins
+    in that slice. The page sums whatever cells the current filters select and
+    recomputes the rate, so a filtered view never quietly shows a season-wide
+    number — and coarser views (a whole mode, or every band) are sums of the
+    same cells rather than a second copy of the data.
+
+    Storing it positionally rather than under `"<map>|<band>"` keys is what
+    makes the resolution affordable: the keys were four fifths of the bytes, so
+    26 maps x 5 bands costs about what 6 modes x 3 bands did.
+    """
     frames = []
     for cols, won in ((TEAM1_BRAWLER_COLS, df["team1_wins"]),
                       (TEAM2_BRAWLER_COLS, 1 - df["team1_wins"])):
@@ -138,29 +157,26 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
     grouped = stacked.groupby("name")["won"].agg(["sum", "count"])
     grouped = grouped[grouped["count"] >= min_games]
 
-    # Appearances and wins broken down by mode and skill band, so the page can
-    # filter on either and recompute rates rather than showing a season-wide
-    # figure that ignores the filter.
+    maps = season_maps(df)
+    map_ix = {m: i for i, m in enumerate(maps)}
     band = _skill_band(df)
-    cells: dict[str, dict[str, list[int]]] = {}
+    width = len(maps) * N_SKILL_BANDS * 2
+
+    grids: dict[str, list[int]] = {}
     for cols, won in ((TEAM1_BRAWLER_COLS, df["team1_wins"]),
                       (TEAM2_BRAWLER_COLS, 1 - df["team1_wins"])):
         for c in cols:
-            sub = pd.DataFrame({"name": df[c], "mode": df["mode"],
+            sub = pd.DataFrame({"name": df[c], "map": df["map"],
                                 "band": band, "won": won}).dropna(subset=["name"])
-            agg = sub.groupby(["name", "mode", "band"])["won"].agg(["sum", "count"])
-            for (name, mode, bnd), row in agg.iterrows():
-                key = f"{mode}|{bnd}"
-                slot = cells.setdefault(name, {}).setdefault(key, [0, 0])
-                slot[0] += int(row["count"])
-                slot[1] += int(row["sum"])
-
-    per_mode = {}
-    for name, by_key in cells.items():
-        for key, (n, _) in by_key.items():
-            mode = key.split("|")[0]
-            per_mode.setdefault(name, {}).setdefault(mode, 0)
-            per_mode[name][mode] += n
+            agg = sub.groupby(["name", "map", "band"])["won"].agg(["sum", "count"])
+            for (name, mp, bnd), row in agg.iterrows():
+                mi = map_ix.get(str(mp))
+                if mi is None:
+                    continue
+                g = grids.setdefault(name, [0] * width)
+                at = (mi * N_SKILL_BANDS + int(bnd)) * 2
+                g[at] += int(row["count"])
+                g[at + 1] += int(row["sum"])
 
     total_slots = len(df) * 6
     out = [
@@ -169,9 +185,8 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
             "games": int(row["count"]),
             "pick_rate": round(float(row["count"]) / total_slots, 5),
             "win_rate": round(float(row["sum"]) / float(row["count"]), 4),
-            "by_mode": per_mode.get(name, {}),
-            # "mode|band" -> [appearances, wins]
-            "cells": cells.get(name, {}),
+            # (map, band) -> [appearances, wins], flattened in that order.
+            "grid": grids.get(name, [0] * width),
         }
         for name, row in grouped.iterrows()
     ]
@@ -187,13 +202,13 @@ def season_stats(df: pd.DataFrame, season: str, dataset: str) -> dict[str, Any]:
         "dataset": dataset,
         "games": int(len(df)),
         "modes": sorted(df["mode"].dropna().unique().tolist()),
-        "maps": sorted(df["map"].dropna().unique().tolist()),
+        "maps": season_maps(df),
         "first_day": str(daily.index[0]) if len(daily) else None,
         "last_day": str(daily.index[-1]) if len(daily) else None,
         "team1_win_rate": round(float(df["team1_wins"].mean()), 4),
         "daily": [{"day": d, "games": int(n)} for d, n in daily.items()],
         "map_modes": _map_modes(df),
-        "skill_bands": [b[2] for b in SKILL_BANDS],
+        "skill_bands": list(SKILL_BAND_LABELS),
     }
 
 
