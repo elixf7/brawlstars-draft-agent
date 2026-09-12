@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from bsdraft.dashboard.export import (
+    ELO_STEPS_PER_POINT,
     N_SKILL_BANDS,
     SKILL_BAND_LABELS,
     SKILL_BIN,
@@ -21,7 +22,6 @@ from bsdraft.dashboard.export import (
     season_maps,
     season_stats,
 )
-from bsdraft.data.sources import ALL_ELO_COLS
 
 MAPS = ["Alpha Base", "Beta Ridge", "Gamma Gulch"]
 MODES = {"Alpha Base": "brawlBall", "Beta Ridge": "brawlBall", "Gamma Gulch": "heist"}
@@ -136,38 +136,42 @@ def test_a_character_confined_to_one_map_fills_only_that_column():
 
 # ----------------------------------------------------- rating distribution
 def a_season_with_ratings(n: int = 900, seed: int = 3) -> pd.DataFrame:
-    """As above, plus the per-slot ratings and an `id` per set."""
+    """As above, with an `id` per set and avg_elo on the grid it really uses:
+    the mean of six whole numbers, so always a sixth of a point."""
     df = a_season(n, seed)
     rng = np.random.default_rng(seed)
     df["id"] = range(len(df))
-    for c in ALL_ELO_COLS:
-        df[c] = rng.integers(10, 23, len(df))
+    df["avg_elo"] = rng.integers(72, 132, len(df)) / ELO_STEPS_PER_POINT
     return df
 
 
-def test_every_slot_is_counted_once():
+def test_one_bar_per_value_the_average_can_actually_take():
+    """A lobby rating is a mean of six integers, so it only lands on sixths.
+    Binning on that grid is the finest honest resolution and leaves no bin
+    straddling two levels."""
+    df = a_season_with_ratings()
+    h = rating_distribution(df)["elo"]
+    assert h["width"] == pytest.approx(1 / ELO_STEPS_PER_POINT)
+    per_bin = [sum(col) for col in zip(*h["counts"], strict=True)]
+    assert sum(per_bin) == len(df)
+    # Every distinct rating in the data occupies its own bin.
+    assert sum(1 for n in per_bin if n) == df["avg_elo"].nunique()
+
+
+def test_every_match_is_counted_once():
     df = a_season_with_ratings()
     r = rating_distribution(df)
-    total = sum(sum(row) for row in r["elo"]["counts"])
-    assert total == len(df) * len(ALL_ELO_COLS)
-
-
-def test_both_scales_describe_the_same_population():
-    """The toggle changes the scale, not what is being counted. If the totals
-    diverge, one view is quietly measuring something else."""
-    r = rating_distribution(a_season_with_ratings())
-    assert (sum(sum(x) for x in r["elo"]["counts"])
-            == sum(sum(x) for x in r["skill"]["counts"]))
+    assert sum(sum(x) for x in r["elo"]["counts"]) == len(df)
+    assert sum(sum(x) for x in r["skill"]["counts"]) == len(df)
 
 
 def test_a_long_set_is_not_counted_once_per_game():
     """The frame handed in has one row per *game*. Counting it directly would
-    weight a three-game set three times and bend the distribution toward
-    whoever plays long sets."""
+    weight a three-game set three times."""
     df = a_season_with_ratings(300)
     expanded = pd.concat([df, df.iloc[:100], df.iloc[:100]], ignore_index=True)
     assert (sum(sum(x) for x in rating_distribution(expanded)["elo"]["counts"])
-            == sum(sum(x) for x in rating_distribution(df)["elo"]["counts"]))
+            == len(df))
 
 
 def test_each_day_gets_its_own_bucket_row():
@@ -175,22 +179,20 @@ def test_each_day_gets_its_own_bucket_row():
     df["battle_time"] = [f"2026090{1 + i % 5}T120000.000Z" for i in range(len(df))]
     r = rating_distribution(df)
     assert r["days"] == sorted(r["days"])
-    assert len(r["days"]) == 5
-    assert len(r["elo"]["counts"]) == 5
+    assert len(r["elo"]["counts"]) == len(r["days"]) == 5
     for day, row in zip(r["days"], r["elo"]["counts"], strict=True):
-        assert sum(row) == int((df["battle_time"].str[:8] == day).sum()) * 6
+        assert sum(row) == int((df["battle_time"].str[:8] == day).sum())
 
 
-def test_a_rating_lands_in_the_bin_the_page_will_read_it_from():
+def test_a_rating_lands_in_the_bin_the_page_reads_it_from():
     """The page turns a bin index back into a value with lo + i*width."""
     df = a_season_with_ratings(200)
-    for c in ALL_ELO_COLS:
-        df[c] = 17
+    df["avg_elo"] = 101 / ELO_STEPS_PER_POINT
     h = rating_distribution(df)["elo"]
-    hit = [i for i, n in enumerate(
-        [sum(col) for col in zip(*h["counts"], strict=True)]) if n]
+    per_bin = [sum(col) for col in zip(*h["counts"], strict=True)]
+    hit = [i for i, n in enumerate(per_bin) if n]
     assert len(hit) == 1
-    assert h["lo"] + hit[0] * h["width"] == 17
+    assert h["lo"] + hit[0] * h["width"] == pytest.approx(101 / ELO_STEPS_PER_POINT)
 
 
 def test_skill_bins_are_placed_on_the_declared_grid():
@@ -199,10 +201,8 @@ def test_skill_bins_are_placed_on_the_declared_grid():
     assert r["skill"]["width"] == SKILL_BIN
 
 
-def test_a_season_without_the_rating_columns_still_renders():
-    """They are an optional extra on the loader; a payload built without them
-    must degrade rather than raise."""
-    df = a_season_with_ratings().drop(columns=ALL_ELO_COLS)
+def test_a_season_without_ratings_still_renders():
+    df = a_season_with_ratings().drop(columns=["avg_elo"])
     r = rating_distribution(df)
     assert "elo" not in r
     assert "skill" in r

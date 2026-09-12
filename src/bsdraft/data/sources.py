@@ -11,7 +11,6 @@ model trained against a named revision is.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,13 +20,6 @@ TEAM1_BRAWLER_COLS = ["t1_b0_name", "t1_b1_name", "t1_b2_name"]
 TEAM2_BRAWLER_COLS = ["t2_b0_name", "t2_b1_name", "t2_b2_name"]
 
 ALL_BRAWLER_COLS = TEAM1_BRAWLER_COLS + TEAM2_BRAWLER_COLS
-
-#: The rating each drafted slot carried into the match. Not needed for
-#: modelling -- the model sees skill through `skill_ns` -- so these are loaded
-#: only when a caller asks for them by name.
-TEAM1_ELO_COLS = ["t1_b0_elo", "t1_b1_elo", "t1_b2_elo"]
-TEAM2_ELO_COLS = ["t2_b0_elo", "t2_b1_elo", "t2_b2_elo"]
-ALL_ELO_COLS = TEAM1_ELO_COLS + TEAM2_ELO_COLS
 
 #: The columns modelling needs. Everything else is dropped at read time.
 KEEP_COLS = [
@@ -116,7 +108,6 @@ def load_matches_from_hub(
     elo_max: float | None = None,
     require_skill: bool = True,
     token: str | None = None,
-    extra_columns: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Fetch one season from the published dataset and apply quality filters.
 
@@ -160,15 +151,12 @@ def load_matches_from_hub(
     for c in conditions[1:]:
         expr = expr & c
 
+    columns = [c for c in KEEP_COLS if c in present]
     missing = set(KEEP_COLS) - present
     if missing:
         raise DatasetError(
             f"{ref} is missing columns needed for modelling: {sorted(missing)}"
         )
-    # Extras are best-effort on purpose: they serve presentation, and a season
-    # published before they existed should still train and still render.
-    wanted = list(KEEP_COLS) + [c for c in extra_columns if c not in KEEP_COLS]
-    columns = [c for c in wanted if c in present]
     return dataset.to_table(columns=columns, filter=expr).to_pandas()
 
 
@@ -178,7 +166,6 @@ def load_matches_from_sqlite(
     elo_min: float | None = None,
     elo_max: float | None = None,
     require_skill: bool = True,
-    extra_columns: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Read a season from a local working database."""
     path = Path(db_path)
@@ -195,11 +182,8 @@ def load_matches_from_sqlite(
     clause = f"WHERE {' AND '.join(where)}" if where else ""
 
     with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-        present = {r[1] for r in conn.execute("PRAGMA table_info(matches)")}
-        wanted = list(KEEP_COLS) + [c for c in extra_columns if c not in KEEP_COLS]
-        columns = [c for c in wanted if c in present or c in KEEP_COLS]
         return pd.read_sql_query(
-            f"SELECT {', '.join(columns)} FROM matches {clause}", conn
+            f"SELECT {', '.join(KEEP_COLS)} FROM matches {clause}", conn
         )
 
 
@@ -210,15 +194,13 @@ def load_matches(
     elo_max: float | None = None,
     require_skill: bool = True,
     token: str | None = None,
-    extra_columns: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Load a season from either source, applying the same filters to both."""
     if isinstance(source, DatasetRef):
         return load_matches_from_hub(
             source, elo_min=elo_min, elo_max=elo_max,
-            require_skill=require_skill, token=token, extra_columns=extra_columns,
+            require_skill=require_skill, token=token,
         )
     return load_matches_from_sqlite(
-        source, elo_min=elo_min, elo_max=elo_max, require_skill=require_skill,
-        extra_columns=extra_columns,
+        source, elo_min=elo_min, elo_max=elo_max, require_skill=require_skill
     )

@@ -16,11 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from bsdraft.data.sources import (
-    ALL_ELO_COLS,
-    TEAM1_BRAWLER_COLS,
-    TEAM2_BRAWLER_COLS,
-)
+from bsdraft.data.sources import TEAM1_BRAWLER_COLS, TEAM2_BRAWLER_COLS
 from bsdraft.fm.ffm import FFMInference
 
 #: Four decimals costs nothing in accuracy and roughly halves the payload.
@@ -197,77 +193,69 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
     return sorted(out, key=lambda r: -r["games"])
 
 
-#: Histogram resolution. Ratings are integers, so a bin per rating point is
-#: exact.
+#: Histogram resolution.
 #:
-#: skill_ns only looks continuous. It is built from `avg_elo`, which is the mean
-#: of six integers and therefore takes 58 distinct values in a season; a single
-#: skill_ns value can hold eight per cent of the matches. Bin it finely and
-#: those atoms land unevenly across the grid, and the chart reads as noise when
-#: it is really showing a spiky discrete variable. A quarter of a standard
-#: deviation measured as the least ragged of the widths tried, so it is what
-#: the chart uses.
-ELO_BIN = 1.0
-SKILL_LO, SKILL_HI, SKILL_BIN = -3.0, 3.0, 0.25
+#: A lobby's rating is the mean of six whole numbers, so it only ever lands on
+#: a sixth. Binning on that grid gives a bar per value the data can actually
+#: take -- the finest honest resolution, and no aliasing, because every bin
+#: holds exactly one level.
+#:
+#: skill_ns inherits that discreteness through the ECDF, so its bars are spiky
+#: for the same reason. A tenth of a standard deviation keeps comparable
+#: detail across the range that holds nearly all of it.
+ELO_STEPS_PER_POINT = 6
+SKILL_LO, SKILL_HI, SKILL_BIN = -3.0, 3.0, 0.1
 SKILL_COL = "skill_ns"
 
 
 def rating_distribution(df: pd.DataFrame) -> dict[str, Any]:
-    """How the season's ratings are spread, day by day.
+    """How the season's lobby ratings are spread, day by day.
 
-    Counted per drafted slot rather than per match. A match carries six players
-    and `avg_elo` is their mean, so a histogram of the average is visibly
-    narrower than the spread of the players themselves -- it would understate
-    exactly the tails a reader is looking for. Both views here count the same
-    six slots per match, so switching between them changes the scale being
-    measured and nothing else.
+    One count per match, on two scales: `avg_elo` as the game records it, and
+    the same matches restated as `skill_ns`.
 
     Buckets are kept per day so the page can sum any date range itself, which
-    is cheaper and far more responsive than shipping a histogram per range.
+    is both smaller to ship and more responsive than a histogram per range.
     """
     if "battle_time" not in df or df.empty:
         return {}
-    # One row per set: the modelling frame has a row per *game*, so counting it
-    # directly would weight a three-game set three times.
+    # The modelling frame carries a row per *game*; a three-game set would
+    # otherwise count three times.
     sets = df.drop_duplicates(subset="id") if "id" in df else df
     day = sets["battle_time"].str[:8]
     days = sorted(day.dropna().unique().tolist())
     if not days:
         return {}
-    day_ix = {d: i for i, d in enumerate(days)}
-    rows = day.map(day_ix).to_numpy()
+    rows = day.map({d: i for i, d in enumerate(days)}).to_numpy()
 
-    elo_cols = [c for c in ALL_ELO_COLS if c in sets.columns]
-    out: dict[str, Any] = {"days": days, "slots_per_match": 6}
+    out: dict[str, Any] = {"days": days}
 
-    def histogram(values: np.ndarray, at: np.ndarray, lo: float, hi: float,
-                  width: float) -> dict[str, Any]:
-        n_bins = max(1, int(round((hi - lo) / width)))
-        ix = np.clip(((values - lo) / width).astype(int), 0, n_bins - 1)
+    def histogram(values, at, lo, width, n_bins):
+        ix = np.clip(np.rint((values - lo) / width).astype(int), 0, n_bins - 1)
         flat = np.bincount(at * n_bins + ix, minlength=len(days) * n_bins)
-        return {"lo": round(lo, 3), "width": round(width, 3),
+        # Not rounded: the page reconstructs a bar's value as lo + i*width, and
+        # a rounded sixth drifts visibly by the right-hand end. These are two
+        # numbers per histogram -- the counts are what the payload is made of.
+        return {"lo": float(lo), "width": float(width),
                 "counts": flat.reshape(len(days), n_bins).tolist()}
 
-    if elo_cols:
-        vals = sets[elo_cols].to_numpy(dtype="float64")
-        at = np.repeat(rows, len(elo_cols))
-        flat = vals.reshape(-1)
-        ok = ~np.isnan(flat)
-        flat, at = flat[ok], at[ok]
-        if flat.size:
-            lo = float(np.floor(flat.min()))
-            hi = float(np.ceil(flat.max())) + ELO_BIN
-            out["elo"] = histogram(flat, at, lo, hi, ELO_BIN)
+    if "avg_elo" in sets.columns:
+        elo = sets["avg_elo"].to_numpy(dtype="float64")
+        ok = ~np.isnan(elo)
+        elo, at = elo[ok], rows[ok]
+        if elo.size:
+            width = 1.0 / ELO_STEPS_PER_POINT
+            lo = float(np.floor(elo.min() * ELO_STEPS_PER_POINT)) / ELO_STEPS_PER_POINT
+            hi = float(np.ceil(elo.max() * ELO_STEPS_PER_POINT)) / ELO_STEPS_PER_POINT
+            n_bins = int(round((hi - lo) / width)) + 1
+            out["elo"] = histogram(elo, at, lo, width, n_bins)
 
     if SKILL_COL in sets.columns:
         skill = sets[SKILL_COL].to_numpy(dtype="float64")
         ok = ~np.isnan(skill)
-        # Each slot inherits its match's lobby skill, so the two views count the
-        # same population and their totals agree.
-        vals = np.repeat(skill[ok], len(elo_cols) or 6)
-        at = np.repeat(rows[ok], len(elo_cols) or 6)
-        if vals.size:
-            out["skill"] = histogram(vals, at, SKILL_LO, SKILL_HI, SKILL_BIN)
+        if ok.any():
+            n_bins = int(round((SKILL_HI - SKILL_LO) / SKILL_BIN))
+            out["skill"] = histogram(skill[ok], rows[ok], SKILL_LO, SKILL_BIN, n_bins)
     return out
 
 

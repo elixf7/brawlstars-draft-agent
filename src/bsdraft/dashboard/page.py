@@ -568,15 +568,13 @@ function renderTable(){
 }
 
 /* ---- rating distribution ----
-   Counted per drafted slot, six per match, so this is the spread of the
-   players in the data rather than of their per-match average -- averaging six
-   ratings pulls in the tails and would make the population look tighter than
-   it is. Buckets arrive per day, so a date range is a sum the page does
-   itself. */
-const RD = { metric:"elo", from:null, to:null, bars:[], geom:null };
+   One count per match. Buckets arrive per day, so a date range is a sum the
+   page does itself. */
+const RD = { metric:"elo", from:null, to:null, bars:[] };
 
 const rdDays = () => (D.ratings && D.ratings.days) || [];
 const rdIso  = d => `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`;
+const rdEdge = (h,b) => h.lo + b*h.width;
 
 function rdTotals(){
   const h = D.ratings && D.ratings[RD.metric];
@@ -595,10 +593,17 @@ function rdTotals(){
   return {h, acc, nb, total, usedDays};
 }
 
-/* The value a bin starts at, and a label for it. */
-const rdEdge = (h,b) => h.lo + b*h.width;
-function rdFmt(v){
-  return RD.metric==="elo" ? String(Math.round(v)) : (v>0?"+":"") + v.toFixed(1);
+function rdFmt(v, precise){
+  if(RD.metric!=="elo") return (v>0?"+":"") + v.toFixed(1);
+  return precise ? v.toFixed(2) : String(Math.round(v));
+}
+
+/* Bars sit on the grid the data uses, which is not a round number, so ticks
+   are placed by value rather than every nth bar. */
+function niceStep(span, target){
+  const raw = span/target, pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  for(const m of [1,2,2.5,5]) if(raw <= m*pow) return m*pow;
+  return 10*pow;
 }
 
 function drawRatings(){
@@ -622,12 +627,13 @@ function drawRatings(){
   const padL=8, padR=8, padT=10, padB=24;
   const plotW=w-padL-padR, plotH=h-padT-padB;
   const peak=Math.max(...t.acc)||1, bw=plotW/t.nb;
+  const at = v => padL + ((v - t.h.lo)/t.h.width + 0.5)*bw;
 
   for(let b=0;b<t.nb;b++){
     const x=padL+b*bw, bh=(t.acc[b]/peak)*plotH;
     if(t.acc[b]>0){
       g.fillStyle=accent; g.globalAlpha=.85;
-      g.fillRect(x+0.5, padT+plotH-bh, Math.max(1,bw-1), bh);
+      g.fillRect(x, padT+plotH-bh, Math.max(1, bw-(bw>3?1:0)), bh);
       g.globalAlpha=1;
     }
     RD.bars.push({x, w:bw, b, n:t.acc[b]});
@@ -635,35 +641,32 @@ function drawRatings(){
   g.strokeStyle=line; g.lineWidth=1;
   g.beginPath(); g.moveTo(padL, padT+plotH+.5); g.lineTo(w-padR, padT+plotH+.5); g.stroke();
 
-  // Median, because it is the number a reader actually wants from a histogram.
   let cum=0, medBin=0;
   for(let b=0;b<t.nb;b++){ cum+=t.acc[b]; if(cum >= t.total/2){ medBin=b; break; } }
-  const medX = padL + (medBin+0.5)*bw;
+  const medVal = rdEdge(t.h, medBin), medX = at(medVal);
   g.strokeStyle=ink2; g.setLineDash([3,3]);
   g.beginPath(); g.moveTo(medX, padT); g.lineTo(medX, padT+plotH); g.stroke();
   g.setLineDash([]);
-  const medLabel = `median ${rdFmt(rdEdge(t.h, medBin))}`;
+  const medLabel = `median ${rdFmt(medVal, true)}`;
   g.fillStyle=ink2; g.textAlign = medX > w*0.7 ? "right" : "left";
   g.fillText(medLabel, medX + (medX > w*0.7 ? -4 : 4), padT+9);
-  g.textAlign="left";
 
-  // Roughly eight ticks, on round values.
-  const step = Math.max(1, Math.round(t.nb/8));
-  g.fillStyle=ink2;
-  for(let b=0;b<t.nb;b+=step){
-    const x=padL+(b+0.5)*bw;
-    g.textAlign="center";
-    g.fillText(rdFmt(rdEdge(t.h,b)), x, padT+plotH+15);
+  const lo=t.h.lo, hi=lo+t.nb*t.h.width;
+  const step=niceStep(hi-lo, 9);
+  g.fillStyle=ink2; g.textAlign="center";
+  for(let v=Math.ceil(lo/step)*step; v<=hi; v+=step){
+    const x=at(v);
+    // A centred label at either end would hang off the canvas.
+    if(x < padL+12 || x > w-padR-12) continue;
+    g.fillText(rdFmt(v), x, padT+plotH+15);
   }
   g.textAlign="left";
-  RD.geom={padL,padT,plotW,plotH,bw};
 
-  const days=rdDays();
-  const span = t.usedDays===days.length
+  const span = t.usedDays===rdDays().length
     ? "the whole season so far"
     : `${t.usedDays} day${t.usedDays===1?"":"s"}`;
   $("#rd-note").textContent =
-    `${t.total.toLocaleString()} player slots over ${span} · ${medLabel}`;
+    `${t.total.toLocaleString()} matches over ${span} · ${medLabel}`;
 }
 
 function ratingsHover(e){
@@ -672,14 +675,14 @@ function ratingsHover(e){
   const mx=e.clientX-r.left, my=e.clientY-r.top;
   const bar = RD.bars.find(b => mx>=b.x && mx<b.x+b.w);
   if(!bar || !t || !t.total){ tip.style.opacity=0; return; }
-  const lo=rdEdge(t.h,bar.b), hi=lo+t.h.width;
+  const lo=rdEdge(t.h,bar.b);
   const label = RD.metric==="elo"
-    ? `rating ${rdFmt(lo)}`
-    : `${rdFmt(lo)} to ${rdFmt(hi)}`;
-  const share = bar.n/t.total*100;
+    ? `rating ${rdFmt(lo, true)}`
+    : `${rdFmt(lo)} to ${rdFmt(lo+t.h.width)}`;
   const extra = RD.metric==="skill"
-    ? `<div class="nb">${skillLabel((lo+hi)/2)}</div>` : "";
-  tip.innerHTML = `<b>${label}</b>${bar.n.toLocaleString()} slots · ${share.toFixed(1)}%${extra}`;
+    ? `<div class="nb">${skillLabel(lo+t.h.width/2)}</div>` : "";
+  tip.innerHTML = `<b>${label}</b>${bar.n.toLocaleString()} matches · `
+    + `${(bar.n/t.total*100).toFixed(1)}%${extra}`;
   tip.style.opacity=1;
   tip.style.left=Math.min(bar.x+bar.w+8, r.width-190)+"px";
   tip.style.top=Math.max(my-10,0)+"px";
@@ -810,16 +813,15 @@ def render(payload: dict[str, Any]) -> str:
             '<th class="num">Log-loss</th><th class="num">AUC</th>'
             '<th>Policy</th><th class="num">Took</th></tr>'
             + run_rows + "</table></div>"
-            '<p class="note" style="max-width:70ch">Every training run is recorded here: '
-            'the model is retrained weekly, and self-play runs in weeks 2 and 4 of a season. '
-            'A run only publishes if it beats every count-based baseline on at least '
-            '100,000 training games, so a model that would be worse than a lookup table '
-            'never replaces the one in use. A rejected policy means self-play did not '
-            'improve on the previous one and the previous one was kept.</p>'
+            '<p class="note" style="max-width:70ch">Every training run, as it ran. '
+            'The model retrains weekly; self-play runs in weeks 2 and 4 of a season. '
+            'A run publishes only if it beats every count-based baseline on at least '
+            '100,000 games, so a model worse than a lookup table never replaces the one '
+            'in use. A rejected policy means self-play failed to improve on it.</p>'
         )
     else:
-        runs_block = ('<p class="note">No training history recorded yet — the registry '
-                      'is stored alongside the dataset and fills in as runs accumulate.</p>')
+        runs_block = ('<p class="note">No runs recorded yet — the registry is stored '
+                      'alongside the dataset and fills in as they accumulate.</p>')
 
     baseline_rows = "".join(
         f'<tr><td>{b["name"]}</td><td class="muted">{b["knows"]}</td>'
@@ -844,9 +846,8 @@ def render(payload: dict[str, Any]) -> str:
 
 <h1>Brawl Stars draft agent</h1>
 <p class="sub">A win-probability model for ranked drafts, trained on
-{s['games']:,} games from season {s['season'].replace('season','')}. It estimates
-which side a completed draft favours, and ranks what to pick next. The model runs
-in your browser, so everything below updates as you change it.</p>
+{s['games']:,} games from season {s['season'].replace('season','')}. It scores a
+finished draft and ranks what to pick next. Everything here runs in your browser.</p>
 
 <div class="tiles">
   <div class="tile"><div class="k">Games trained on</div><div class="v">{s['games']:,}</div></div>
@@ -857,11 +858,10 @@ in your browser, so everything below updates as you change it.</p>
 </div>
 
 <h2>Draft assistant</h2>
-<p class="note" style="margin:0 0 .9rem;max-width:70ch">Fill either side to see the
-win probability for your team, along with the strongest remaining picks. The
-percentage beside each option is what the draft becomes if you take it. On the
-opponent's turn the ranking inverts — their best pick is the one that costs you
-the most.</p>
+<p class="note" style="margin:0 0 .9rem;max-width:70ch">Fill either side to see
+your win probability and the strongest picks left. The percentage on an option is
+what the draft becomes if you take it. On the opponent's turn the ranking inverts:
+their best pick is the one that costs you most.</p>
 <div class="card">
   <div class="controls">
     <label>Map <select id="map"></select></label>
@@ -896,20 +896,17 @@ the most.</p>
 </div>
 <details class="card" style="margin-top:.7rem">
   <summary style="cursor:pointer;font-weight:600">How the recommendation is made</summary>
-  <p class="note">The model scores a completed draft. To rank a pick that leaves
-  the draft unfinished, the remaining picks have to be filled in somehow.</p>
-  <p class="note"><strong>With lookahead off</strong>, a candidate is scored as the
-  board stands after taking it. This is fast and rewards picks that are strong on
-  their own — including ones that are easily answered.</p>
-  <p class="note"><strong>With lookahead on</strong>, each of the strongest two dozen
-  candidates is played out to a full six-pick draft, repeatedly, with both sides
-  choosing well but not identically each time. The candidate's score becomes the
-  average outcome across those drafts. A pick that looks strong but hands the
-  opponent a good answer loses value here, which is the point of searching at all.</p>
-  <p class="note">Raising the number of simulations makes the ranking steadier and
-  slower. The production system uses the same idea with a proper tree search and
-  thousands of simulations per pick; this is a lighter version that fits in a
-  browser tab.</p>
+  <p class="note">The model scores finished drafts, so ranking a mid-draft pick
+  means filling in what is missing.</p>
+  <p class="note"><strong>Lookahead off</strong> scores the board as it stands once
+  the pick is made. Fast, and it favours picks that are strong alone — including
+  ones that are easily answered.</p>
+  <p class="note"><strong>Lookahead on</strong> plays each of the top two dozen
+  candidates out to a full six-pick draft, many times, with both sides choosing well
+  but not identically. The score is the average result. A pick that hands the
+  opponent a good answer loses value here, which is the reason to search at all.</p>
+  <p class="note">More simulations, steadier ranking, slower page. Training uses the
+  same idea with a real tree search; this is the version that fits in a tab.</p>
 </details>
 
 <h2>How the model sees characters</h2>
@@ -932,15 +929,13 @@ the most.</p>
     <span id="pca-note"></span>
   </div>
 </div>
-<p class="note" style="max-width:70ch"><strong>Position</strong> reflects how a
-character interacts — who it pairs with, who it beats, who beats it. These are the
-model's learned interaction vectors, fitted only from match outcomes; no role or class
-information was provided, so characters landing near each other is something the model
-inferred rather than something it was told.
-<strong>Colour</strong> shows standalone strength in the selected context, and
-<strong>size</strong> shows pick share there. Position is fixed because interaction
-structure is global in this model; the map, mode and skill controls change colour and
-size only.</p>
+<p class="note" style="max-width:70ch"><strong>Position</strong> is how a character
+interacts — who it pairs with, who it beats, who beats it — read off the model's
+interaction vectors. Nothing about roles or classes was supplied, so characters
+sitting together is inferred from outcomes alone. <strong>Colour</strong> is
+standalone strength in the selected context; <strong>size</strong> is share of picks
+in it. Position never moves: interaction structure is global in this model, so the
+controls change colour and size only.</p>
 
 <h2>Characters this season</h2>
 <div class="card">
@@ -980,20 +975,17 @@ size only.</p>
   <canvas id="ratings"></canvas>
   <div id="rd-tip"></div>
 </div>
-<p class="note" style="max-width:70ch">Every drafted slot counts once, six per
-match, so this is the spread of the players in the dataset rather than of their
-per-match average — averaging six ratings pulls in the tails and makes the
-population look tighter than it really is.
-<strong>Rating as recorded</strong> is the number the game shows. It is not
-comparable across a season: ranked resets every month and climbs back over the
-following weeks, so the same rating means different things in week one and week
-four. <strong>Season-adjusted</strong> is the same population expressed as
-<code>skill_ns</code>, which converts each match to a percentile against other
-matches from the same few days. Step the dates forward on the raw scale and the
-distribution slides to the right as the season climbs; do the same on the
-adjusted scale and it stays where it is, which is the whole point of it. It looks chunky because it is: a lobby's rating is the mean of
-six whole numbers, so it lands on a few dozen distinct values, and the tallest
-single one accounts for about one match in twelve.</p>
+<p class="note" style="max-width:70ch">One bar per match, at the lobby's
+average rating across its six players. Bars sit a sixth of a point apart because
+that average is a mean of six whole numbers, so those are the only values it can
+take, and the spikes on whole numbers are matchmaking at work: six players on
+the same rating average to exactly that rating, and half of all matches land on
+one of those ten values. <strong>As recorded</strong> is the game's own number, which is not
+comparable across a season: ranked resets monthly and climbs back over the
+following weeks. <strong>Season-adjusted</strong> restates the same matches as
+<code>skill_ns</code>, a percentile against other matches from the same few days.
+Step the dates forward on the raw scale and the shape slides right; on the
+adjusted scale it stays put, which is what the column is for.</p>
 </section>
 
 <h2>Pipeline</h2>
@@ -1001,10 +993,10 @@ single one accounts for about one match in twelve.</p>
 
 <h2>Games collected per day</h2>
 <div class="chart">{bars}</div>
-<p class="note">{day(s['first_day'])} to {day(s['last_day'])}. Matches are collected
-on a schedule by a
-<a href="https://github.com/elixf7/brawlstars-data-pipeline">separate pipeline</a> and
-published as a versioned dataset; this model is retrained weekly against it.</p>
+<p class="note">{day(s['first_day'])} to {day(s['last_day'])}. Collected on a
+schedule by a
+<a href="https://github.com/elixf7/brawlstars-data-pipeline">separate pipeline</a>
+and published as a versioned dataset, which this model retrains against weekly.</p>
 
 <h2>How good is it, really</h2>
 <div class="overflow"><table>
@@ -1012,14 +1004,14 @@ published as a versioned dataset; this model is retrained weekly against it.</p>
 <th class="num">AUC</th><th class="num">Calibration</th></tr>
 {baseline_rows}
 </table></div>
-<p class="note" style="max-width:70ch">Log-loss penalises confident mistakes; 0.6931
-is the score for predicting 50% every time. Each row knows more than the one above it.
-The comparison matters more than the absolute figure — character-and-map win rates
-alone reach 0.6794, so a model near that number would be adding nothing over a lookup
-table. Calibration measures whether a stated 65% happens 65% of the time, which the
-draft assistant depends on: it combines these probabilities across simulated drafts,
-so systematic overconfidence compounds. Measured on {m['n_val']:,} games held out by
-date, all predictors trained on the same earlier games.</p>
+<p class="note" style="max-width:70ch">Log-loss punishes confident mistakes; 0.6931
+is what you score by saying 50% every time. Each row knows more than the one above.
+The gap matters more than the number — counting character-and-map win rates alone
+reaches 0.6794, so a model near that is worth no more than a lookup table.
+Calibration asks whether a stated 65% happens 65% of the time; the draft assistant
+averages these probabilities over simulated drafts, so overconfidence compounds.
+Measured on {m['n_val']:,} games held out by date, every predictor trained on the
+same earlier games.</p>
 
 
 <footer>
