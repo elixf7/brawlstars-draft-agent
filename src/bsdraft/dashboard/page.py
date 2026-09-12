@@ -113,12 +113,13 @@ tr.highlight td{background:var(--accent-soft);font-weight:600}
 .ramp{display:flex;align-items:center;gap:.4rem}
 .ramp .swatch{width:88px;height:9px;border-radius:99px;
  background:linear-gradient(90deg,var(--lose),var(--surface-2),var(--win))}
-#tip{position:absolute;pointer-events:none;opacity:0;transition:opacity .1s;
+#tip,#rd-tip{position:absolute;pointer-events:none;opacity:0;transition:opacity .1s;
  background:var(--surface);border:1px solid var(--line);border-radius:8px;
  padding:.5rem .65rem;font-size:.82rem;box-shadow:0 4px 16px rgba(0,0,0,.18);
  max-width:230px;z-index:5}
-#tip b{display:block;margin-bottom:.2rem}
-#tip .nb{color:var(--muted);font-size:.78rem;margin-top:.25rem}
+#tip b,#rd-tip b{display:block;margin-bottom:.2rem}
+#tip .nb,#rd-tip .nb{color:var(--muted);font-size:.78rem;margin-top:.25rem}
+#ratings{width:100%;height:260px;display:block}
 footer{margin-top:3rem;padding-top:1.4rem;border-top:1px solid var(--line);
  color:var(--muted);font-size:.84rem}
 .note{font-size:.85rem;color:var(--muted);margin:.5rem 0 0}
@@ -566,6 +567,124 @@ function renderTable(){
     ? "Show fewer" : `Show all ${rows.length} characters`;
 }
 
+/* ---- rating distribution ----
+   Counted per drafted slot, six per match, so this is the spread of the
+   players in the data rather than of their per-match average -- averaging six
+   ratings pulls in the tails and would make the population look tighter than
+   it is. Buckets arrive per day, so a date range is a sum the page does
+   itself. */
+const RD = { metric:"elo", from:null, to:null, bars:[], geom:null };
+
+const rdDays = () => (D.ratings && D.ratings.days) || [];
+const rdIso  = d => `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`;
+
+function rdTotals(){
+  const h = D.ratings && D.ratings[RD.metric];
+  if(!h || !h.counts.length) return null;
+  const days = rdDays();
+  const from = RD.from || days[0], to = RD.to || days[days.length-1];
+  const nb = h.counts[0].length, acc = new Float64Array(nb);
+  let total = 0, usedDays = 0;
+  for(let i=0;i<days.length;i++){
+    if(days[i] < from || days[i] > to) continue;
+    usedDays++;
+    const row = h.counts[i];
+    for(let b=0;b<nb;b++) acc[b] += row[b];
+  }
+  for(let b=0;b<nb;b++) total += acc[b];
+  return {h, acc, nb, total, usedDays};
+}
+
+/* The value a bin starts at, and a label for it. */
+const rdEdge = (h,b) => h.lo + b*h.width;
+function rdFmt(v){
+  return RD.metric==="elo" ? String(Math.round(v)) : (v>0?"+":"") + v.toFixed(1);
+}
+
+function drawRatings(){
+  const cv = $("#ratings"); if(!cv) return;
+  const dpr = window.devicePixelRatio||1, w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w*dpr; cv.height = h*dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const css = getComputedStyle(document.body);
+  const ink2 = css.getPropertyValue("--ink-2").trim();
+  const line = css.getPropertyValue("--line").trim();
+  const accent = css.getPropertyValue("--accent").trim();
+  g.font = "11px ui-sans-serif,system-ui,sans-serif";
+
+  const t = rdTotals(); RD.bars = [];
+  if(!t || !t.total){
+    g.fillStyle = ink2;
+    g.fillText("No matches in this date range.", 12, h/2);
+    $("#rd-note").textContent = "";
+    return;
+  }
+  const padL=8, padR=8, padT=10, padB=24;
+  const plotW=w-padL-padR, plotH=h-padT-padB;
+  const peak=Math.max(...t.acc)||1, bw=plotW/t.nb;
+
+  for(let b=0;b<t.nb;b++){
+    const x=padL+b*bw, bh=(t.acc[b]/peak)*plotH;
+    if(t.acc[b]>0){
+      g.fillStyle=accent; g.globalAlpha=.85;
+      g.fillRect(x+0.5, padT+plotH-bh, Math.max(1,bw-1), bh);
+      g.globalAlpha=1;
+    }
+    RD.bars.push({x, w:bw, b, n:t.acc[b]});
+  }
+  g.strokeStyle=line; g.lineWidth=1;
+  g.beginPath(); g.moveTo(padL, padT+plotH+.5); g.lineTo(w-padR, padT+plotH+.5); g.stroke();
+
+  // Median, because it is the number a reader actually wants from a histogram.
+  let cum=0, medBin=0;
+  for(let b=0;b<t.nb;b++){ cum+=t.acc[b]; if(cum >= t.total/2){ medBin=b; break; } }
+  const medX = padL + (medBin+0.5)*bw;
+  g.strokeStyle=ink2; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(medX, padT); g.lineTo(medX, padT+plotH); g.stroke();
+  g.setLineDash([]);
+  const medLabel = `median ${rdFmt(rdEdge(t.h, medBin))}`;
+  g.fillStyle=ink2; g.textAlign = medX > w*0.7 ? "right" : "left";
+  g.fillText(medLabel, medX + (medX > w*0.7 ? -4 : 4), padT+9);
+  g.textAlign="left";
+
+  // Roughly eight ticks, on round values.
+  const step = Math.max(1, Math.round(t.nb/8));
+  g.fillStyle=ink2;
+  for(let b=0;b<t.nb;b+=step){
+    const x=padL+(b+0.5)*bw;
+    g.textAlign="center";
+    g.fillText(rdFmt(rdEdge(t.h,b)), x, padT+plotH+15);
+  }
+  g.textAlign="left";
+  RD.geom={padL,padT,plotW,plotH,bw};
+
+  const days=rdDays();
+  const span = t.usedDays===days.length
+    ? "the whole season so far"
+    : `${t.usedDays} day${t.usedDays===1?"":"s"}`;
+  $("#rd-note").textContent =
+    `${t.total.toLocaleString()} player slots over ${span} · ${medLabel}`;
+}
+
+function ratingsHover(e){
+  const cv=$("#ratings"), r=cv.getBoundingClientRect(), tip=$("#rd-tip");
+  const t=rdTotals();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  const bar = RD.bars.find(b => mx>=b.x && mx<b.x+b.w);
+  if(!bar || !t || !t.total){ tip.style.opacity=0; return; }
+  const lo=rdEdge(t.h,bar.b), hi=lo+t.h.width;
+  const label = RD.metric==="elo"
+    ? `rating ${rdFmt(lo)}`
+    : `${rdFmt(lo)} to ${rdFmt(hi)}`;
+  const share = bar.n/t.total*100;
+  const extra = RD.metric==="skill"
+    ? `<div class="nb">${skillLabel((lo+hi)/2)}</div>` : "";
+  tip.innerHTML = `<b>${label}</b>${bar.n.toLocaleString()} slots · ${share.toFixed(1)}%${extra}`;
+  tip.style.opacity=1;
+  tip.style.left=Math.min(bar.x+bar.w+8, r.width-190)+"px";
+  tip.style.top=Math.max(my-10,0)+"px";
+}
+
 /* ---- boot ---- */
 function init(){
   const sel=$("#map");
@@ -623,6 +742,33 @@ function init(){
   $("#space").onmouseleave=()=>{$("#tip").style.opacity=0;};
   window.addEventListener("resize", drawSpace);
   drawSpace();
+
+  // Rating distribution. A payload from before this existed simply has no
+  // `ratings`, and the section removes itself rather than rendering empty.
+  const rdSection = $("#rd-section");
+  if(rdDays().length && D.ratings.elo){
+    const from=$("#rd-from"), to=$("#rd-to"), days=rdDays();
+    from.min = to.min = rdIso(days[0]);
+    from.max = to.max = rdIso(days[days.length-1]);
+    from.value = rdIso(days[0]); to.value = rdIso(days[days.length-1]);
+    const sync=()=>{
+      RD.from = from.value.replace(/-/g,"") || days[0];
+      RD.to   = to.value.replace(/-/g,"")   || days[days.length-1];
+      if(RD.from > RD.to){ const f=RD.from; RD.from=RD.to; RD.to=f; }
+      drawRatings();
+    };
+    from.onchange=sync; to.onchange=sync;
+    $("#rd-metric").onchange=e=>{RD.metric=e.target.value; drawRatings();};
+    $("#rd-reset").onclick=()=>{
+      from.value=rdIso(days[0]); to.value=rdIso(days[days.length-1]); sync();
+    };
+    $("#ratings").onmousemove=ratingsHover;
+    $("#ratings").onmouseleave=()=>{$("#rd-tip").style.opacity=0;};
+    window.addEventListener("resize", drawRatings);
+    drawRatings();
+  } else if(rdSection){
+    rdSection.remove();
+  }
 
   $("#pick-search").oninput=e=>fillPickList(e.target.value);
   $("#pick-close").onclick=()=>$("#picker").close();
@@ -817,6 +963,38 @@ size only.</p>
   </table></div>
   <p class="note"><button id="ct-more">Show all characters</button></p>
 </div>
+
+<section id="rd-section">
+<h2>Who is in the data</h2>
+<div class="mapwrap">
+  <div class="controls">
+    <label>Scale <select id="rd-metric">
+      <option value="elo">Rating as recorded</option>
+      <option value="skill">Season-adjusted (skill_ns)</option>
+    </select></label>
+    <label>From <input type="date" id="rd-from"></label>
+    <label>To <input type="date" id="rd-to"></label>
+    <button id="rd-reset">Whole season</button>
+    <span class="muted" id="rd-note"></span>
+  </div>
+  <canvas id="ratings"></canvas>
+  <div id="rd-tip"></div>
+</div>
+<p class="note" style="max-width:70ch">Every drafted slot counts once, six per
+match, so this is the spread of the players in the dataset rather than of their
+per-match average — averaging six ratings pulls in the tails and makes the
+population look tighter than it really is.
+<strong>Rating as recorded</strong> is the number the game shows. It is not
+comparable across a season: ranked resets every month and climbs back over the
+following weeks, so the same rating means different things in week one and week
+four. <strong>Season-adjusted</strong> is the same population expressed as
+<code>skill_ns</code>, which converts each match to a percentile against other
+matches from the same few days. Step the dates forward on the raw scale and the
+distribution slides to the right as the season climbs; do the same on the
+adjusted scale and it stays where it is, which is the whole point of it. It looks chunky because it is: a lobby's rating is the mean of
+six whole numbers, so it lands on a few dozen distinct values, and the tallest
+single one accounts for about one match in twelve.</p>
+</section>
 
 <h2>Pipeline</h2>
 {runs_block}

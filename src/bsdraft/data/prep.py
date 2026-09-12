@@ -13,6 +13,7 @@ Key decisions baked in:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -96,6 +97,7 @@ def load_filtered_matches(
     source: DatasetRef | str | Path = DB_PATH,
     elo_min: int = ELO_MIN,
     elo_max: int = ELO_MAX,
+    extra_columns: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Load matches with quality filters applied at read time.
 
@@ -106,7 +108,8 @@ def load_filtered_matches(
       - skill_ns_ok = 1  (ECDF score from a well-populated time bin)
       - avg_elo between elo_min and elo_max
     """
-    df = load_matches(source, elo_min=elo_min, elo_max=elo_max)
+    df = load_matches(source, elo_min=elo_min, elo_max=elo_max,
+                      extra_columns=extra_columns)
     print(f"Loaded {len(df):,} rows after quality filters from {source}.")
     return df
 
@@ -263,6 +266,7 @@ def build_game_dataset(
     elo_max: int = ELO_MAX,
     draw_value: float = None,
     min_brawler_picks: int = 0,
+    extra_columns: Sequence[str] = (),
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Run the full 1.1 preprocessing pipeline.
@@ -275,7 +279,8 @@ def build_game_dataset(
     vocab : list[str]
         Sorted brawler vocabulary.
     """
-    df = load_filtered_matches(source, elo_min=elo_min, elo_max=elo_max)
+    df = load_filtered_matches(source, elo_min=elo_min, elo_max=elo_max,
+                               extra_columns=extra_columns)
     df = drop_incomplete_teams(df)
     df = expand_to_games(df, draw_value=draw_value)
     vocab = build_brawler_vocab(df, min_picks=min_brawler_picks)

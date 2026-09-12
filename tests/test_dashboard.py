@@ -12,12 +12,16 @@ import pytest
 from bsdraft.dashboard.export import (
     N_SKILL_BANDS,
     SKILL_BAND_LABELS,
+    SKILL_BIN,
+    SKILL_LO,
     TEAM1_BRAWLER_COLS,
     TEAM2_BRAWLER_COLS,
     character_stats,
+    rating_distribution,
     season_maps,
     season_stats,
 )
+from bsdraft.data.sources import ALL_ELO_COLS
 
 MAPS = ["Alpha Base", "Beta Ridge", "Gamma Gulch"]
 MODES = {"Alpha Base": "brawlBall", "Beta Ridge": "brawlBall", "Gamma Gulch": "heist"}
@@ -128,3 +132,77 @@ def test_a_character_confined_to_one_map_fills_only_that_column():
 
     assert played[home] == int((df["map"] == MAPS[2]).sum())
     assert all(n == 0 for mi, n in played.items() if mi != home)
+
+
+# ----------------------------------------------------- rating distribution
+def a_season_with_ratings(n: int = 900, seed: int = 3) -> pd.DataFrame:
+    """As above, plus the per-slot ratings and an `id` per set."""
+    df = a_season(n, seed)
+    rng = np.random.default_rng(seed)
+    df["id"] = range(len(df))
+    for c in ALL_ELO_COLS:
+        df[c] = rng.integers(10, 23, len(df))
+    return df
+
+
+def test_every_slot_is_counted_once():
+    df = a_season_with_ratings()
+    r = rating_distribution(df)
+    total = sum(sum(row) for row in r["elo"]["counts"])
+    assert total == len(df) * len(ALL_ELO_COLS)
+
+
+def test_both_scales_describe_the_same_population():
+    """The toggle changes the scale, not what is being counted. If the totals
+    diverge, one view is quietly measuring something else."""
+    r = rating_distribution(a_season_with_ratings())
+    assert (sum(sum(x) for x in r["elo"]["counts"])
+            == sum(sum(x) for x in r["skill"]["counts"]))
+
+
+def test_a_long_set_is_not_counted_once_per_game():
+    """The frame handed in has one row per *game*. Counting it directly would
+    weight a three-game set three times and bend the distribution toward
+    whoever plays long sets."""
+    df = a_season_with_ratings(300)
+    expanded = pd.concat([df, df.iloc[:100], df.iloc[:100]], ignore_index=True)
+    assert (sum(sum(x) for x in rating_distribution(expanded)["elo"]["counts"])
+            == sum(sum(x) for x in rating_distribution(df)["elo"]["counts"]))
+
+
+def test_each_day_gets_its_own_bucket_row():
+    df = a_season_with_ratings()
+    df["battle_time"] = [f"2026090{1 + i % 5}T120000.000Z" for i in range(len(df))]
+    r = rating_distribution(df)
+    assert r["days"] == sorted(r["days"])
+    assert len(r["days"]) == 5
+    assert len(r["elo"]["counts"]) == 5
+    for day, row in zip(r["days"], r["elo"]["counts"], strict=True):
+        assert sum(row) == int((df["battle_time"].str[:8] == day).sum()) * 6
+
+
+def test_a_rating_lands_in_the_bin_the_page_will_read_it_from():
+    """The page turns a bin index back into a value with lo + i*width."""
+    df = a_season_with_ratings(200)
+    for c in ALL_ELO_COLS:
+        df[c] = 17
+    h = rating_distribution(df)["elo"]
+    hit = [i for i, n in enumerate(
+        [sum(col) for col in zip(*h["counts"], strict=True)]) if n]
+    assert len(hit) == 1
+    assert h["lo"] + hit[0] * h["width"] == 17
+
+
+def test_skill_bins_are_placed_on_the_declared_grid():
+    r = rating_distribution(a_season_with_ratings())
+    assert r["skill"]["lo"] == SKILL_LO
+    assert r["skill"]["width"] == SKILL_BIN
+
+
+def test_a_season_without_the_rating_columns_still_renders():
+    """They are an optional extra on the loader; a payload built without them
+    must degrade rather than raise."""
+    df = a_season_with_ratings().drop(columns=ALL_ELO_COLS)
+    r = rating_distribution(df)
+    assert "elo" not in r
+    assert "skill" in r

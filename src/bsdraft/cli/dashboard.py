@@ -11,7 +11,7 @@ from bsdraft.config import ConfigError, load_config
 from bsdraft.dashboard.export import build_payload
 from bsdraft.dashboard.page import write_dashboard
 from bsdraft.data.prep import build_game_dataset
-from bsdraft.data.sources import DatasetError
+from bsdraft.data.sources import ALL_ELO_COLS, DatasetError
 
 
 def main() -> None:
@@ -30,8 +30,11 @@ def main() -> None:
             raise SystemExit(f"error: no model at {model_path}. Train one first.")
         with open(model_path, "rb") as f:
             model = pickle.load(f)
+        # The per-slot ratings are not used for modelling; the dashboard wants
+        # them to show how the season's ratings are actually spread.
         df, _ = build_game_dataset(source, elo_min=cfg.data.elo_min,
-                                   elo_max=cfg.data.elo_max)
+                                   elo_max=cfg.data.elo_max,
+                                   extra_columns=ALL_ELO_COLS)
     except (ConfigError, DatasetError) as e:
         raise SystemExit(f"error: {e}") from None
 

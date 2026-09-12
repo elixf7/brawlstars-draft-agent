@@ -16,7 +16,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from bsdraft.data.sources import TEAM1_BRAWLER_COLS, TEAM2_BRAWLER_COLS
+from bsdraft.data.sources import (
+    ALL_ELO_COLS,
+    TEAM1_BRAWLER_COLS,
+    TEAM2_BRAWLER_COLS,
+)
 from bsdraft.fm.ffm import FFMInference
 
 #: Four decimals costs nothing in accuracy and roughly halves the payload.
@@ -193,6 +197,80 @@ def character_stats(df: pd.DataFrame, min_games: int = 200) -> list[dict]:
     return sorted(out, key=lambda r: -r["games"])
 
 
+#: Histogram resolution. Ratings are integers, so a bin per rating point is
+#: exact.
+#:
+#: skill_ns only looks continuous. It is built from `avg_elo`, which is the mean
+#: of six integers and therefore takes 58 distinct values in a season; a single
+#: skill_ns value can hold eight per cent of the matches. Bin it finely and
+#: those atoms land unevenly across the grid, and the chart reads as noise when
+#: it is really showing a spiky discrete variable. A quarter of a standard
+#: deviation measured as the least ragged of the widths tried, so it is what
+#: the chart uses.
+ELO_BIN = 1.0
+SKILL_LO, SKILL_HI, SKILL_BIN = -3.0, 3.0, 0.25
+SKILL_COL = "skill_ns"
+
+
+def rating_distribution(df: pd.DataFrame) -> dict[str, Any]:
+    """How the season's ratings are spread, day by day.
+
+    Counted per drafted slot rather than per match. A match carries six players
+    and `avg_elo` is their mean, so a histogram of the average is visibly
+    narrower than the spread of the players themselves -- it would understate
+    exactly the tails a reader is looking for. Both views here count the same
+    six slots per match, so switching between them changes the scale being
+    measured and nothing else.
+
+    Buckets are kept per day so the page can sum any date range itself, which
+    is cheaper and far more responsive than shipping a histogram per range.
+    """
+    if "battle_time" not in df or df.empty:
+        return {}
+    # One row per set: the modelling frame has a row per *game*, so counting it
+    # directly would weight a three-game set three times.
+    sets = df.drop_duplicates(subset="id") if "id" in df else df
+    day = sets["battle_time"].str[:8]
+    days = sorted(day.dropna().unique().tolist())
+    if not days:
+        return {}
+    day_ix = {d: i for i, d in enumerate(days)}
+    rows = day.map(day_ix).to_numpy()
+
+    elo_cols = [c for c in ALL_ELO_COLS if c in sets.columns]
+    out: dict[str, Any] = {"days": days, "slots_per_match": 6}
+
+    def histogram(values: np.ndarray, at: np.ndarray, lo: float, hi: float,
+                  width: float) -> dict[str, Any]:
+        n_bins = max(1, int(round((hi - lo) / width)))
+        ix = np.clip(((values - lo) / width).astype(int), 0, n_bins - 1)
+        flat = np.bincount(at * n_bins + ix, minlength=len(days) * n_bins)
+        return {"lo": round(lo, 3), "width": round(width, 3),
+                "counts": flat.reshape(len(days), n_bins).tolist()}
+
+    if elo_cols:
+        vals = sets[elo_cols].to_numpy(dtype="float64")
+        at = np.repeat(rows, len(elo_cols))
+        flat = vals.reshape(-1)
+        ok = ~np.isnan(flat)
+        flat, at = flat[ok], at[ok]
+        if flat.size:
+            lo = float(np.floor(flat.min()))
+            hi = float(np.ceil(flat.max())) + ELO_BIN
+            out["elo"] = histogram(flat, at, lo, hi, ELO_BIN)
+
+    if SKILL_COL in sets.columns:
+        skill = sets[SKILL_COL].to_numpy(dtype="float64")
+        ok = ~np.isnan(skill)
+        # Each slot inherits its match's lobby skill, so the two views count the
+        # same population and their totals agree.
+        vals = np.repeat(skill[ok], len(elo_cols) or 6)
+        at = np.repeat(rows[ok], len(elo_cols) or 6)
+        if vals.size:
+            out["skill"] = histogram(vals, at, SKILL_LO, SKILL_HI, SKILL_BIN)
+    return out
+
+
 def season_stats(df: pd.DataFrame, season: str, dataset: str) -> dict[str, Any]:
     """Headline numbers and per-day volume for the overview."""
     day = df["battle_time"].str[:8]
@@ -284,6 +362,7 @@ def build_payload(
         "embedding": embed_characters(model),
         "season": season_stats(df, season, dataset),
         "characters": character_stats(df),
+        "ratings": rating_distribution(df),
         "baselines": BASELINES,
     }
 
