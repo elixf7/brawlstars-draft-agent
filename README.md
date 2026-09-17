@@ -9,9 +9,22 @@ Trained on 1.3 million games.
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **[Brawl Stars Atlas →](https://brawlstars-atlas.pages.dev/)** ·
-**[Model dashboard →](https://elixf7.github.io/brawlstars-draft-agent/)** ·
 **[Dataset →](https://huggingface.co/datasets/EliF77/brawlstars-ranked)** ·
 **[Data pipeline →](https://github.com/elixf7/brawlstars-data-pipeline)**
+
+---
+
+## Try the model
+
+> ### 🗺️ [**Brawl Stars Atlas**](https://brawlstars-atlas.pages.dev/)
+>
+> This model, running in your browser. Build a draft pick by pick and watch the
+> win probability move, set bans, adjust how hard the search thinks, and see the
+> ranked meta the model learned — how each brawler's strength shifts across maps
+> and skill bands, and which brawlers it grouped together without ever being
+> told what a tank or a sniper is.
+>
+> Retrained weekly. No account, no install.
 
 ---
 
@@ -22,9 +35,10 @@ known map. Some pairs work together, some counter each other, and what is strong
 depends on the map and the skill of the lobby. This estimates the win
 probability of a completed draft, and uses that to rank what to pick next.
 
-The dashboard runs the model in your browser. Fill in either side and the
-probability moves as you pick, with the strongest remaining options listed
-beneath — and an adjustable amount of lookahead, which changes the answer.
+[Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) runs the model in your
+browser. Fill in either side and the probability moves as you pick, with the
+strongest remaining options listed beneath — and an adjustable amount of
+lookahead, which changes the answer.
 
 ## What it achieves
 
@@ -74,8 +88,8 @@ Counters use separate attack and defend vectors, because an inner product is
 symmetric and a single vector per character would say the same thing about "A
 beats B" as about "B beats A".
 
-It is small — 29,354 parameters — which is why the dashboard can ship the whole
-model to the browser and run inference client-side.
+It is small — 29,354 parameters — which is why the whole model ships to the
+browser and runs inference client-side.
 
 ### Searching the draft
 
@@ -83,9 +97,9 @@ A pick is not good or bad on its own; it depends on the reply. Monte Carlo tree
 search plays the remaining picks forward against a modelled opponent, so a
 character that scores well alone but is easily answered gets discounted.
 
-The dashboard does a lighter version of this — each of the strongest candidates
-is played out to a full six-pick draft, repeatedly — and the difference is
-visible: with lookahead off the top recommendation changes.
+Atlas does a lighter version of this — each of the strongest candidates is
+played out to a full six-pick draft, repeatedly — and the difference is visible:
+with lookahead off the top recommendation changes.
 
 ### Learning to search less
 
@@ -106,9 +120,8 @@ Darryl, Bull and Bibi; Piper beside Angelo, Squeak and Nani; Mortis beside Alli,
 Lily and Kenji.
 
 Nothing told the model what a tank or a sniper is. It only ever saw which drafts
-won. The [character map](https://elixf7.github.io/brawlstars-draft-agent/) on the
-dashboard is that projection, coloured by strength in whatever context you
-select.
+won. The [character map](https://brawlstars-atlas.pages.dev/) on Atlas is that
+projection, coloured by strength in whatever context you select.
 
 ## The data
 
@@ -138,9 +151,9 @@ Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-uv run bsdraft-train fm   -c configs/season53.toml   # ~20 seconds
-uv run bsdraft-eval       -c configs/season53.toml   # the table above
-uv run bsdraft-dashboard  -c configs/season53.toml   # rebuild the page
+uv run bsdraft-train fm  -c configs/season53.toml   # ~20 seconds
+uv run bsdraft-eval      -c configs/season53.toml   # the table above
+uv run bsdraft-publish   -c configs/season53.toml   # model + season as JSON
 ```
 
 A run is described by a config file rather than remembered arguments:
@@ -189,23 +202,22 @@ config differences
 ### Retraining
 
 [`.github/workflows/train.yml`](.github/workflows/train.yml) runs weekly, after
-the pipeline's collection, Fridays at 07:00 UTC. It selects the newest published
-season and pins the latest Hugging Face revision once for training, evaluation,
-and dashboard generation. `configs/season53.toml` supplies the measured model
-hyperparameters; the generated `runs/weekly.toml` replaces its season and revision.
-Publication failures fail the workflow, and runs with publication disabled skip
-the deployment job.
+the pipeline's collection, Fridays at 07:00 UTC — and every day at 05:17 during
+a season's first week, because the pipeline crawls daily then and the season
+behind the model doubles overnight. It picks a season, pins the latest Hugging
+Face revision once for training, evaluation and publication, and writes
+`runs/weekly.toml` — `configs/season53.toml` supplies the measured
+hyperparameters and only the season and revision are replaced.
 
-[Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) is the public interactive
-site powered by this model. Its separate weekly refresh runs Fridays at 12:23 UTC,
-checks that training and dashboard publication succeeded, and deploys the model
-plus matching current season statistics to Cloudflare. If training lacks enough
-new-season data or any check fails, the previous site remains available. A delayed
-training run can be followed by manually running Atlas's Deploy atlas workflow.
+The daily entry fires year-round; a gate job turns it away outside a season
+opening, and again until the new season can actually beat the baselines, so it
+costs forty seconds on the days it does nothing. Seven days is not arbitrary:
+it keeps the ramp inside week 1, so a daily run never lands on a self-play week
+and distils a policy every morning.
 
 ```
-retrain  ──▶  gate  ──▶  self-play  ──▶  dashboard  ──▶  published
- 20 sec      must beat   weeks 2 & 4      rebuilt        to Pages
+retrain  ──▶  gate  ──▶  self-play  ──▶  payload  ──▶  published
+ 20 sec      must beat   weeks 2 & 4    data.json      to Pages
              baselines   of the season
 ```
 
@@ -215,6 +227,38 @@ Self-play plateaus after one iteration, so it runs twice a season instead.
 
 Nothing publishes unless it earns it: the gate requires beating every baseline
 on at least 100,000 training and 10,000 held-out games.
+
+#### Which season gets trained
+
+Newest published is the usual answer, and not always the right one. A season's
+first crawl lands hours after the reset, when battle logs still hold mostly
+pre-reset matches — season 54 opened with 4,082 sets. Training that fails the
+gate, which leaves the payload unpublished, which strands Atlas on whatever it
+last deployed and turns the weekly run red for no reason.
+
+So the newest season has to clear a floor of 150,000 sets before it is chosen;
+below it the season before is trained again. The same data gives the same
+weights, the payload republishes, and the chain keeps moving until the new
+season is worth switching to. `BSDRAFT_MIN_SEASON_ROWS` overrides the floor for
+a run that wants the new season sooner.
+
+#### What gets published
+
+`bsdraft-publish` writes `data.json` — the weights, the character embedding and
+the season's counted matches — plus a small landing page pointing at Atlas.
+[Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) reads that file
+directly. Its own refresh runs Fridays at 12:23 UTC, and daily at 13:17 through
+a season's opening once training has switched to the new season. Either way it
+confirms training succeeded and published before deploying. If any check fails
+the previous site stays online, so a stale Atlas is the failure mode rather than
+a wrong one.
+
+The daily training entry is deliberately scheduled *before* the weekly one
+rather than after. On a Friday inside an opening week both fire, and Atlas gates
+on the latest training run having published — a daily run that decides not to
+train still records a run, so landing it after the weekly one would look like
+training that never published, and would freeze the site every Friday of a
+season's first week.
 
 ## Layout
 
@@ -226,7 +270,7 @@ src/bsdraft/
   mcts/       draft state, tree search, recommendation
   selfplay/   self-play and the networks trained on it
   eval/       baselines, metrics, the independent judge
-  dashboard/  the static page and its payload
+  payload/    the model and its season, as one JSON blob
 configs/      run definitions
 tests/        151 tests, no network required
 ```

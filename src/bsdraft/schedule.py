@@ -20,6 +20,14 @@ _THURSDAY = 3
 #: Weeks into the season on which self-play is worth running.
 SELFPLAY_WEEKS = (2, 4)
 
+#: How long a season is treated as "opening". The pipeline crawls daily for this
+#: long, so the season becomes trainable within days of its reset rather than
+#: after a week of twice-weekly runs, and training follows it daily instead of
+#: waiting for Friday. Seven days keeps the whole ramp inside week 1, which is
+#: the week self-play already refuses to run in -- a daily run in week 2 would
+#: otherwise distil a policy every single day.
+OPENING_DAYS = 7
+
 
 def third_thursday(year: int, month: int) -> date:
     days = [
@@ -44,6 +52,16 @@ def weeks_into_season(on: date | None = None) -> int:
     return (on - season_start(on)).days // 7 + 1
 
 
+def in_season_opening(on: date | None = None, days: int = OPENING_DAYS) -> bool:
+    """Whether the season in progress is new enough to train every day.
+
+    The companion ETL pipeline computes the same window and crawls daily
+    through it; this is the consumer side of that.
+    """
+    on = on or date.today()
+    return (on - season_start(on)).days < days
+
+
 def should_run_selfplay(on: date | None = None, weeks: tuple[int, ...] = SELFPLAY_WEEKS) -> bool:
     """Self-play is worth running only in certain weeks of the season.
 
@@ -54,5 +72,5 @@ def should_run_selfplay(on: date | None = None, weeks: tuple[int, ...] = SELFPLA
     return weeks_into_season(on) in weeks
 
 
-__all__ = ["SELFPLAY_WEEKS", "season_start", "should_run_selfplay",
-           "third_thursday", "weeks_into_season"]
+__all__ = ["OPENING_DAYS", "SELFPLAY_WEEKS", "in_season_opening", "season_start",
+           "should_run_selfplay", "third_thursday", "weeks_into_season"]

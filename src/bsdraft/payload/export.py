@@ -1,4 +1,4 @@
-"""Everything the dashboard needs, as one JSON payload.
+"""Everything a consumer needs to run this model, as one JSON payload.
 
 The model is 29,354 parameters — about 230 KB of JSON — so it ships to the
 browser whole and the page runs inference itself. No server, no API, no latency:
