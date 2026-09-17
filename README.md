@@ -8,7 +8,8 @@ Trained on 1.3 million games.
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**[Try the draft assistant →](https://elixf7.github.io/brawlstars-draft-agent/)** ·
+**[Brawl Stars Atlas →](https://brawlstars-atlas.pages.dev/)** ·
+**[Model dashboard →](https://elixf7.github.io/brawlstars-draft-agent/)** ·
 **[Dataset →](https://huggingface.co/datasets/EliF77/brawlstars-ranked)** ·
 **[Data pipeline →](https://github.com/elixf7/brawlstars-data-pipeline)**
 
@@ -188,7 +189,19 @@ config differences
 ### Retraining
 
 [`.github/workflows/train.yml`](.github/workflows/train.yml) runs weekly, after
-the pipeline's collection.
+the pipeline's collection, Fridays at 07:00 UTC. It selects the newest published
+season and pins the latest Hugging Face revision once for training, evaluation,
+and dashboard generation. `configs/season53.toml` supplies the measured model
+hyperparameters; the generated `runs/weekly.toml` replaces its season and revision.
+Publication failures fail the workflow, and runs with publication disabled skip
+the deployment job.
+
+[Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) is the public interactive
+site powered by this model. Its separate weekly refresh runs Fridays at 12:23 UTC,
+checks that training and dashboard publication succeeded, and deploys the model
+plus matching current season statistics to Cloudflare. If training lacks enough
+new-season data or any check fails, the previous site remains available. A delayed
+training run can be followed by manually running Atlas's Deploy atlas workflow.
 
 ```
 retrain  ──▶  gate  ──▶  self-play  ──▶  dashboard  ──▶  published

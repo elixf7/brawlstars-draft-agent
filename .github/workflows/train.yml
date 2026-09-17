@@ -29,7 +29,7 @@ permissions:
   id-token: write
 
 env:
-  CONFIG: configs/season53.toml
+  CONFIG: runs/weekly.toml
   DATASET_REPO: EliF77/brawlstars-ranked
 
 jobs:
@@ -42,6 +42,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync
+      - name: Select latest published season and pin this run
+        run: uv run python -m bsdraft.cli.weekly_config
 
       # Which season, and how far into it — self-play is worth running only
       # once there is enough new data to be worth distilling.
@@ -135,7 +137,7 @@ jobs:
 
   deploy:
     needs: train
-    if: always() && needs.train.result == 'success'
+    if: needs.train.result == 'success' && (github.event_name == 'schedule' || inputs.publish)
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -143,4 +145,3 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
-        continue-on-error: true

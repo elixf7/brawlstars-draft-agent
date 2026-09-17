@@ -73,3 +73,16 @@ Season 53, as of writing: **571,123 sets → 1,314,120 games**, across 6 modes,
 The character vocabulary grows — it was 95 two seasons earlier. New characters
 ship regularly, so the model and every baseline fall back gracefully on ones
 they have not seen rather than failing.
+
+## Weekly publication and history cleanup
+
+The scheduled workflow selects the newest published season and resolves the
+current dataset commit once into `runs/weekly.toml`. Training, evaluation, and
+dashboard generation all use that same revision. The quality gate keeps the
+previous release online until a new season has enough useful data.
+
+[Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) checks the successful
+weekly dashboard publication and uses the latest season parquet, requiring its
+counts to agree with the model. Atlas does not require historical Hub revisions.
+The pipeline's Saturday history squash remains enabled: recorded revision IDs
+identify training inputs, but old snapshots may no longer be downloadable.
