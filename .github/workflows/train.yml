@@ -5,9 +5,27 @@ name: Train
 # there is no plateau at a million games — and it trains in about twenty
 # seconds. Self-play runs twice a season instead: it plateaus after one
 # iteration, so weekly runs would spend time re-learning the same thing.
+#
+# Every day during a season's first week, on top of that. The pipeline crawls
+# daily through the same window, so a new season goes from unusable to worth
+# training within days of its reset -- waiting for Friday would show a
+# week-old season on a site whose whole point is the current one. The daily
+# entry fires year-round; the `decide` job turns it away outside a season
+# opening, and again unless the newest season has actually grown enough to
+# beat the baselines. Seven days keeps the ramp inside week 1, so a daily run
+# never lands on a self-play week.
+#
+# 05:17, deliberately before the 07:00 weekly entry rather than after it. On a
+# Friday inside an opening week both fire, and Brawl Stars Atlas gates its
+# refresh on the *latest* training run having published. A daily run that
+# decides not to train still records a run, so if it landed after the weekly
+# one it would look like training that never published, and the site would
+# refuse to refresh every Friday of a season's first week. Ordering it first
+# makes the weekly run always the last word.
 on:
   schedule:
     - cron: "0 7 * * 5"
+    - cron: "17 5 * * *"
   workflow_dispatch:
     inputs:
       force_selfplay:
@@ -18,6 +36,9 @@ on:
         description: "Publish the model payload"
         type: boolean
         default: true
+      min_season_rows:
+        description: "Sets a season needs before it is trained; blank uses the default"
+        required: false
 
 concurrency:
   group: bsdraft-train
@@ -33,7 +54,49 @@ env:
   DATASET_REPO: EliF77/brawlstars-ranked
 
 jobs:
+  # Cheap, so the expensive job never starts on a day with nothing new to
+  # train. Only the daily entry is conditional: Friday is the regular schedule
+  # and a dispatch is somebody asking for it on purpose.
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      train: ${{ steps.check.outputs.train }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - id: check
+        env:
+          BSDRAFT_MIN_SEASON_ROWS: ${{ inputs.min_season_rows }}
+        # Fail loudly rather than emitting nothing: an empty output reads as
+        # "do not train", which is the safe answer but an invisible one.
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.schedule }}" != "17 5 * * *" ]; then
+            echo "Regular run; training."
+            echo "train=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          opening=$(uv run python -c \
+            "from bsdraft.schedule import in_season_opening; print(str(in_season_opening()).lower())")
+          echo "Season opening: $opening"
+          if [ "$opening" != "true" ]; then
+            echo "Past the opening window; the weekly run covers it."
+            echo "train=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `ready` is true once the newest published season is worth training
+          # on its own, rather than falling back to the season before it.
+          uv run python -m bsdraft.cli.weekly_config --check > /tmp/check.env
+          cat /tmp/check.env
+          ready=$(grep '^ready=' /tmp/check.env | cut -d= -f2)
+          echo "train=${ready}" >> "$GITHUB_OUTPUT"
+
   train:
+    needs: decide
+    if: needs.decide.outputs.train == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -42,7 +105,13 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync
-      - name: Select latest published season and pin this run
+      # Newest published season, unless it is still too thin to beat the
+      # baselines -- a season's first crawl lands hours after the reset and
+      # yields a few thousand sets. Lower the floor by hand to switch to a new
+      # season early, once an off-schedule crawl has filled it out.
+      - name: Select a season to train and pin this run
+        env:
+          BSDRAFT_MIN_SEASON_ROWS: ${{ inputs.min_season_rows }}
         run: uv run python -m bsdraft.cli.weekly_config
 
       # Which season, and how far into it — self-play is worth running only
