@@ -25,7 +25,7 @@ bsdraft-data = "bsdraft.cli.data:main"
 bsdraft-train = "bsdraft.cli.train:main"
 bsdraft-runs = "bsdraft.cli.runs:main"
 bsdraft-eval = "bsdraft.cli.evaluate:main"
-bsdraft-dashboard = "bsdraft.cli.dashboard:main"
+bsdraft-publish = "bsdraft.cli.publish:main"
 bsdraft-registry = "bsdraft.cli.registry:main"
 
 [project.urls]

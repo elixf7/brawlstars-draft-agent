@@ -1,4 +1,4 @@
-"""The dashboard's per-character grid is positional, which is the whole reason
+"""The payload's per-character grid is positional, which is the whole reason
 it is affordable — and the whole reason it can break quietly. The page reads a
 cell by arithmetic on the map and band indices, so if the export ever writes
 them in a different order the numbers stay plausible and stop being true.
@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bsdraft.dashboard.export import (
+from bsdraft.payload.export import (
     ELO_STEPS_PER_POINT,
     N_SKILL_BANDS,
     SKILL_BAND_LABELS,

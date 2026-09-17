@@ -15,7 +15,7 @@ on:
         type: boolean
         default: false
       publish:
-        description: "Deploy the dashboard"
+        description: "Publish the model payload"
         type: boolean
         default: true
 
@@ -88,10 +88,13 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: uv run bsdraft-registry push --repo-id "$DATASET_REPO" --path runs/registry.db
 
-      - name: Build the dashboard
-        run: uv run bsdraft-dashboard -c "$CONFIG" --out site/index.html
+      # data.json is the model, and Brawl Stars Atlas reads it straight from
+      # Pages. index.html beside it is a landing page pointing at the atlas --
+      # the interactive dashboard that used to be built here lives there now.
+      - name: Build the model payload
+        run: uv run bsdraft-publish -c "$CONFIG" --out-dir site
 
-      - name: Package the dashboard
+      - name: Package the payload
         if: github.event_name == 'schedule' || inputs.publish
         uses: actions/upload-pages-artifact@v3
         with:

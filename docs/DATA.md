@@ -76,13 +76,16 @@ they have not seen rather than failing.
 
 ## Weekly publication and history cleanup
 
-The scheduled workflow selects the newest published season and resolves the
-current dataset commit once into `runs/weekly.toml`. Training, evaluation, and
-dashboard generation all use that same revision. The quality gate keeps the
-previous release online until a new season has enough useful data.
+The scheduled workflow resolves the current dataset commit once into
+`runs/weekly.toml`; training, evaluation and publication all use that same
+revision. It trains the newest published season holding at least 150,000 sets,
+falling back a season when the newest is still too thin to beat the baselines —
+a season's opening days produce a few thousand rows, and training those would
+leave the payload unpublished. The quality gate keeps the previous release
+online until a new season is worth switching to.
 
-[Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) checks the successful
-weekly dashboard publication and uses the latest season parquet, requiring its
-counts to agree with the model. Atlas does not require historical Hub revisions.
-The pipeline's Saturday history squash remains enabled: recorded revision IDs
-identify training inputs, but old snapshots may no longer be downloadable.
+[Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) reads the published
+`data.json` and the latest season parquet, requiring its counts to agree with
+the model. It needs no historical Hub revisions, so the pipeline's Saturday
+history squash stays enabled: recorded revision IDs identify training inputs,
+but old snapshots may no longer be downloadable.
