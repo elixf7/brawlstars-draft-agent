@@ -8,7 +8,9 @@ The cadence is asymmetric on purpose. The win-probability model trains in
 seconds and keeps improving as data accumulates — measured, there is no plateau
 at a million games — so it is retrained weekly. Self-play is slower and plateaus
 after one iteration, so it runs twice a season: once when there is enough new
-data to be worth distilling, and again once the meta has settled.
+data to be worth distilling, and again once the meta has settled. A new season
+gets one extra run, on the Monday after its reset, so it does not wait a week
+to appear.
 """
 from __future__ import annotations
 
@@ -20,13 +22,13 @@ _THURSDAY = 3
 #: Weeks into the season on which self-play is worth running.
 SELFPLAY_WEEKS = (2, 4)
 
-#: How long a season is treated as "opening". The pipeline crawls daily for this
-#: long, so the season becomes trainable within days of its reset rather than
-#: after a week of twice-weekly runs, and training follows it daily instead of
-#: waiting for Friday. Seven days keeps the whole ramp inside week 1, which is
-#: the week self-play already refuses to run in -- a daily run in week 2 would
-#: otherwise distil a policy every single day.
-OPENING_DAYS = 7
+#: Days after the reset that a new season gets its one extra training run. The
+#: pipeline crawls daily through the season's opening, so by the Monday after a
+#: Thursday reset there are four days of the new season to train on -- enough to
+#: be worth publishing, and a week earlier than waiting for Friday would be.
+#: Four days keeps it inside week 1, which is the week self-play already refuses
+#: to run in; a run in week 2 would distil a policy on top of it.
+OPENING_RUN_DAYS = 4
 
 
 def third_thursday(year: int, month: int) -> date:
@@ -52,14 +54,19 @@ def weeks_into_season(on: date | None = None) -> int:
     return (on - season_start(on)).days // 7 + 1
 
 
-def in_season_opening(on: date | None = None, days: int = OPENING_DAYS) -> bool:
-    """Whether the season in progress is new enough to train every day.
+def is_opening_run_day(on: date | None = None, days: int = OPENING_RUN_DAYS) -> bool:
+    """Whether today is the one extra training run a new season gets.
 
-    The companion ETL pipeline computes the same window and crawls daily
-    through it; this is the consumer side of that.
+    Training used to follow the pipeline's daily crawl for a whole week, which
+    published a model every morning while the season was still doubling
+    overnight -- six of those seven were superseded within a day. One run, once
+    the weekend's crawling is in, is the same answer for a seventh of the work.
+
+    Brawl Stars Atlas deploys on the same day and expects the model to be there,
+    so this date is the one both sides are written against.
     """
     on = on or date.today()
-    return (on - season_start(on)).days < days
+    return (on - season_start(on)).days == days
 
 
 def should_run_selfplay(on: date | None = None, weeks: tuple[int, ...] = SELFPLAY_WEEKS) -> bool:
@@ -72,5 +79,5 @@ def should_run_selfplay(on: date | None = None, weeks: tuple[int, ...] = SELFPLA
     return weeks_into_season(on) in weeks
 
 
-__all__ = ["OPENING_DAYS", "SELFPLAY_WEEKS", "in_season_opening", "season_start",
+__all__ = ["OPENING_RUN_DAYS", "SELFPLAY_WEEKS", "is_opening_run_day", "season_start",
            "should_run_selfplay", "third_thursday", "weeks_into_season"]

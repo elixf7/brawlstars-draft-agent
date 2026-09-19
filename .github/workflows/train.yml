@@ -6,26 +6,28 @@ name: Train
 # seconds. Self-play runs twice a season instead: it plateaus after one
 # iteration, so weekly runs would spend time re-learning the same thing.
 #
-# Every day during a season's first week, on top of that. The pipeline crawls
-# daily through the same window, so a new season goes from unusable to worth
-# training within days of its reset -- waiting for Friday would show a
-# week-old season on a site whose whole point is the current one. The daily
-# entry fires year-round; the `decide` job turns it away outside a season
-# opening, and again unless the newest season has actually grown enough to
-# beat the baselines. Seven days keeps the ramp inside week 1, so a daily run
-# never lands on a self-play week.
+# One extra run per season, on the Monday after its Thursday reset. The
+# pipeline crawls daily through a season's opening, so by Monday there are four
+# days of the new season to train on -- worth publishing, and a week earlier
+# than waiting for Friday. Brawl Stars Atlas deploys the same afternoon and
+# expects the model to be there.
 #
-# 05:17, deliberately before the 07:00 weekly entry rather than after it. On a
-# Friday inside an opening week both fire, and Brawl Stars Atlas gates its
-# refresh on the *latest* training run having published. A daily run that
-# decides not to train still records a run, so if it landed after the weekly
-# one it would look like training that never published, and the site would
-# refuse to refresh every Friday of a season's first week. Ordering it first
-# makes the weekly run always the last word.
+# This used to run every day of the first week. Six of those seven were
+# superseded within a day while the season was still doubling overnight, so
+# they cost a training run each to publish something nothing ever read.
+#
+# The Monday entry fires year-round; `decide` turns it away unless it is the
+# Monday after a reset, and again unless the newest season has actually grown
+# enough to beat the baselines. Day 4 keeps it inside week 1, so it never lands
+# on a self-play week.
+#
+# 05:17 rather than 07:00 so the hour still leaves the chain in order on the
+# day it fires: Atlas deploys at 13:17 and the pipeline crawls at 17:17, so a
+# crawl never lands between a model and the site built from it.
 on:
   schedule:
     - cron: "0 7 * * 5"
-    - cron: "17 5 * * *"
+    - cron: "17 5 * * 1"
   workflow_dispatch:
     inputs:
       force_selfplay:
@@ -74,16 +76,16 @@ jobs:
         # "do not train", which is the safe answer but an invisible one.
         run: |
           set -euo pipefail
-          if [ "${{ github.event.schedule }}" != "17 5 * * *" ]; then
+          if [ "${{ github.event.schedule }}" != "17 5 * * 1" ]; then
             echo "Regular run; training."
             echo "train=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           opening=$(uv run python -c \
-            "from bsdraft.schedule import in_season_opening; print(str(in_season_opening()).lower())")
-          echo "Season opening: $opening"
+            "from bsdraft.schedule import is_opening_run_day; print(str(is_opening_run_day()).lower())")
+          echo "Opening run day: $opening"
           if [ "$opening" != "true" ]; then
-            echo "Past the opening window; the weekly run covers it."
+            echo "Not the Monday after a reset; the weekly run covers it."
             echo "train=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
