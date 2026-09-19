@@ -91,4 +91,4 @@ class TestOpeningRun:
         hits = [d for d in days if is_opening_run_day(d)]
         assert len(hits) == 12
         assert all(d.weekday() == 0 for d in hits), hits
-        assert all((b - a).days >= 28 for a, b in zip(hits, hits[1:]))
+        assert all((b - a).days >= 28 for a, b in zip(hits, hits[1:], strict=False))
