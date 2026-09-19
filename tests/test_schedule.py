@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import pytest
 
 from bsdraft.schedule import (
-    in_season_opening,
+    is_opening_run_day,
     season_start,
     should_run_selfplay,
     third_thursday,
@@ -56,29 +56,39 @@ def test_selfplay_weeks_are_configurable():
     assert should_run_selfplay(date(2026, 10, 1), weeks=(3,))
 
 
-class TestSeasonOpening:
-    """The daily training entry fires year-round; this is what turns it away.
+class TestOpeningRun:
+    """The one extra run a new season gets, and what stops it becoming seven.
 
-    Season 54 began 2026-09-17, season 55 on 2026-10-15.
+    Season 54 began Thursday 2026-09-17, season 55 on Thursday 2026-10-15.
     """
 
-    def test_the_whole_first_week_is_opening(self):
-        for day in range(7):
+    def test_it_is_the_monday_after_the_reset(self):
+        assert is_opening_run_day(date(2026, 9, 21))
+        assert date(2026, 9, 21).weekday() == 0
+
+    def test_no_other_day_of_the_first_week_runs(self):
+        for day in range(8):
             when = date(2026, 9, 17) + timedelta(days=day)
-            assert in_season_opening(when), when
+            assert is_opening_run_day(when) == (when == date(2026, 9, 21)), when
 
-    def test_it_stops_before_week_two(self):
-        assert not in_season_opening(date(2026, 9, 24))
-
-    def test_the_opening_window_never_overlaps_a_self_play_week(self):
-        """A daily run landing on a self-play week would distil one every day."""
+    def test_it_never_lands_on_a_self_play_week(self):
+        """A run landing on a self-play week would distil a policy on top of it."""
         day = date(2026, 9, 17)
         while day < date(2026, 10, 15):
-            assert not (in_season_opening(day) and should_run_selfplay(day)), day
+            assert not (is_opening_run_day(day) and should_run_selfplay(day)), day
             day += timedelta(days=1)
 
-    def test_the_day_before_the_next_reset_is_not_opening(self):
-        assert not in_season_opening(date(2026, 10, 14))
+    def test_the_next_reset_runs_again_with_no_edit(self):
+        assert is_opening_run_day(date(2026, 10, 19))
+        assert date(2026, 10, 19).weekday() == 0
 
-    def test_the_next_reset_opens_again_with_no_edit(self):
-        assert in_season_opening(date(2026, 10, 15))
+    def test_it_fires_once_a_season_across_a_year(self):
+        """Exactly one run per season, always a Monday, for twelve resets."""
+        days = [
+            date(2026, 9, 17) + timedelta(days=n)
+            for n in range((date(2027, 9, 17) - date(2026, 9, 17)).days)
+        ]
+        hits = [d for d in days if is_opening_run_day(d)]
+        assert len(hits) == 12
+        assert all(d.weekday() == 0 for d in hits), hits
+        assert all((b - a).days >= 28 for a, b in zip(hits, hits[1:], strict=False))

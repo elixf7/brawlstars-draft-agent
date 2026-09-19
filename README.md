@@ -202,18 +202,22 @@ config differences
 ### Retraining
 
 [`.github/workflows/train.yml`](.github/workflows/train.yml) runs weekly, after
-the pipeline's collection, Fridays at 07:00 UTC — and every day at 05:17 during
-a season's first week, because the pipeline crawls daily then and the season
-behind the model doubles overnight. It picks a season, pins the latest Hugging
+the pipeline's collection, Fridays at 07:00 UTC — plus one extra run at 05:17 on
+the Monday after a season's Thursday reset, by which point the pipeline's daily
+crawling has four days of the new season behind it. It picks a season, pins the latest Hugging
 Face revision once for training, evaluation and publication, and writes
 `runs/weekly.toml` — `configs/season53.toml` supplies the measured
 hyperparameters and only the season and revision are replaced.
 
-The daily entry fires year-round; a gate job turns it away outside a season
-opening, and again until the new season can actually beat the baselines, so it
-costs forty seconds on the days it does nothing. Seven days is not arbitrary:
-it keeps the ramp inside week 1, so a daily run never lands on a self-play week
-and distils a policy every morning.
+The Monday entry fires year-round; a gate job turns it away unless it is the
+Monday after a reset, and again until the new season can actually beat the
+baselines, so it costs forty seconds on the days it does nothing. Day 4 is not
+arbitrary: it keeps the run inside week 1, so it never lands on a self-play week
+and distils a policy on top of it.
+
+This used to run every day of a season's first week. Six of those seven were
+superseded within a day while the season was still doubling overnight — a
+training run each to publish something nothing read.
 
 ```
 retrain  ──▶  gate  ──▶  self-play  ──▶  payload  ──▶  published
@@ -247,18 +251,16 @@ a run that wants the new season sooner.
 `bsdraft-publish` writes `data.json` — the weights, the character embedding and
 the season's counted matches — plus a small landing page pointing at Atlas.
 [Brawl Stars Atlas](https://brawlstars-atlas.pages.dev/) reads that file
-directly. Its own refresh runs Fridays at 12:23 UTC, and daily at 13:17 through
-a season's opening once training has switched to the new season. Either way it
-confirms training succeeded and published before deploying. If any check fails
-the previous site stays online, so a stale Atlas is the failure mode rather than
-a wrong one.
+directly. Its own refresh runs daily at 13:17 UTC and deploys only when this
+payload is newer than the one its live site is serving — so it publishes on the
+days this workflow does, and reads one file on the rest. It confirms training
+succeeded and published before deploying. If any check fails the previous site
+stays online, so a stale Atlas is the failure mode rather than a wrong one.
 
-The daily training entry is deliberately scheduled *before* the weekly one
-rather than after. On a Friday inside an opening week both fire, and Atlas gates
-on the latest training run having published — a daily run that decides not to
-train still records a run, so landing it after the weekly one would look like
-training that never published, and would freeze the site every Friday of a
-season's first week.
+The hours keep the chain in order on a day all three fire: training at 05:17,
+Atlas at 13:17, the pipeline's crawl last at 17:17. A crawl landing between a
+model and the site built from it would leave the dataset ahead of the model,
+which Atlas correctly refuses to deploy.
 
 ## Layout
 
