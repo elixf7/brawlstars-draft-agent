@@ -60,12 +60,12 @@ jobs:
   # train. Only the daily entry is conditional: Friday is the regular schedule
   # and a dispatch is somebody asking for it on purpose.
   decide:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       train: ${{ steps.check.outputs.train }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync
@@ -99,11 +99,13 @@ jobs:
   train:
     needs: decide
     if: needs.decide.outputs.train == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
+    outputs:
+      selfplay: ${{ steps.week.outputs.selfplay }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync
@@ -119,12 +121,14 @@ jobs:
       # Which season, and how far into it — self-play is worth running only
       # once there is enough new data to be worth distilling.
       - name: Where are we in the season
+        id: week
         run: |
           uv run python - <<'PY' >> "$GITHUB_ENV"
           from bsdraft.schedule import should_run_selfplay, weeks_into_season
           print(f"SEASON_WEEK={weeks_into_season()}")
           print(f"RUN_SELFPLAY={'true' if should_run_selfplay() else 'false'}")
           PY
+          uv run python -c "from bsdraft.schedule import should_run_selfplay; print('selfplay=' + ('true' if should_run_selfplay() or '${{ inputs.force_selfplay }}' == 'true' else 'false'))" >> "$GITHUB_OUTPUT"
           uv run python -c "from bsdraft.schedule import *; print(f'season started {season_start(__import__(\"datetime\").date.today())}, week {weeks_into_season()}')"
 
       # Runners start empty, so without this each run would record itself into
@@ -145,11 +149,18 @@ jobs:
       - name: Check it beats the baselines
         run: uv run bsdraft-eval -c "$CONFIG" --require-beat-baselines
 
-      - name: Self-play
-        if: env.RUN_SELFPLAY == 'true' || inputs.force_selfplay
-        # Same config as the model above, so self-play loads the evaluator
-        # that was just trained rather than looking in another run directory.
-        run: uv run bsdraft-train selfplay -c "$CONFIG"
+      # Self-play runs in its own job below. Its output is not part of the
+      # published model, and on Oct 9 it took the whole runner down (out of
+      # memory on week 4's data) with a model that had already passed the gate
+      # still waiting to publish. In its own job it can fail without costing
+      # the week's model; this hands it the evaluator just trained.
+      - name: Hand the trained model to self-play
+        if: steps.week.outputs.selfplay == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: selfplay-input-${{ github.run_id }}
+          path: runs/
+          retention-days: 3
 
       # Observability, not the job: a missing HF_TOKEN should not fail training.
       - name: Store the run registry
@@ -167,7 +178,7 @@ jobs:
 
       - name: Package the payload
         if: github.event_name == 'schedule' || inputs.publish
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -200,7 +211,7 @@ jobs:
 
       - name: Keep the run summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: run-${{ github.run_id }}
           path: |
@@ -209,13 +220,49 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+  # After the model is trained, beside its publication rather than in front of
+  # it. A failure here shows on the run, and the week's model ships anyway.
+  selfplay:
+    needs: train
+    if: needs.train.outputs.selfplay == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Take the model the train job produced
+        uses: actions/download-artifact@v8
+        with:
+          name: selfplay-input-${{ github.run_id }}
+          path: runs/
+      # The train job pushed its own runs first, so this picks them up.
+      - name: Restore the run registry
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run bsdraft-registry pull --repo-id "$DATASET_REPO" \
+            --path runs/registry.db --allow-missing
+      - name: Self-play
+        # Same config as the model, so self-play loads the evaluator that was
+        # just trained rather than looking in another run directory.
+        run: uv run bsdraft-train selfplay -c "$CONFIG"
+      - name: Store the run registry
+        if: always() && hashFiles('runs/registry.db') != ''
+        continue-on-error: true
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: uv run bsdraft-registry push --repo-id "$DATASET_REPO" --path runs/registry.db
+
   deploy:
     needs: train
     if: needs.train.result == 'success' && (github.event_name == 'schedule' || inputs.publish)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
